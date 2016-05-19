@@ -10,46 +10,44 @@
 
 #include "header.h"
 
-static double findnu(int j);							//Prototype func to calculate nu, given an initial guess ~1
-static double scaleI(int j);							//Prototype func to scale I_trial
+//static double findnu(int j);							//Prototype func to calculate nu, given an initial guess ~1
+//static double scaleI(int j);							//Prototype func to scale I_trial
 static void getGammaA();							//Prototype func to calculate gamma and a_coef along each segment given Ppts
 static double EOSdensity(double pressure, int useparam);	   		//Prototype func for the EOS, P=P(rho)	
 static double EOSpressure(double massdensity, int useparam);    		//Prototype func for the EOS, P=P(rho)
-static double derivs(int i, double r, double mass, double pressure,	 	//Prototype func for 6 ODEs: dP/dr, dM/dr, dv/dr and (3 for) dI/dr
-	      double nu, double f, double cassi);
+static double derivs(int i, double r, double array[]);			 	//Prototype func for 6 ODEs: dP/dr, dM/dr, dv/dr and (3 for) dI/dr
 static void rkdriver(double initEpsilon[], double initRho[], double initM[],	//Prototype func for Runge-Kutta integration driver function
 	      double r1,double p_edge); 
 	
 static double *centralP;							//Initialize global array to save central pressures
-static double (*y_v);						   		//Initialize global array to save solutions for nu (from metric)
-static double (*y_f);						   		//Initialize global array to save solutions for f = 1-w/Omega
-static double (*y_i);						   		//Initialize global array to save solutions for f = 1-w/Omega
+//static double (*y_v);						   		//Initialize global array to save solutions for nu (from metric)
+//static double (*y_f);						   		//Initialize global array to save solutions for f = 1-w/Omega
+//static double (*y_i);						   		//Initialize global array to save solutions for f = 1-w/Omega
 static int iter;
 
 extern void tov()
-/* Main driver function to get M, R, and moment of inertia
+/* Main driver function to get M and  R (moment of inertia disabled)
    by solving the TOV equations (+ ODEs for I)
 */
 {
 
-	double *initRho, *initEpsilon, *initM;
+	double *initEpsilon, *initM;
 	double Pedge, r_start;	
 	int i,j,k, EoSindex, index;								
 	
 	getGammaA();								//Find Gamma and a_coef along each segment, given Ppts
 
-	initRho=dvector(1,nEpsilon);
 	initEpsilon=dvector(1,nEpsilon);
 	initM=dvector(1,nEpsilon);																		
 	
 	p_ns = EOSpressure(rho_ns, 0);						//Pressure at rho_saturation according to SLy (0=don't use param version of EOS)
-
+	
 	Pedge=ACCURACY*pow(clight,8.0)/(Ggrav*Ggrav*Ggrav*Msolar*Msolar);	//F.'s P_edge criteria in cgs units
 	Pedge/=p_char;								//F.'s P_edge criteria in my dim'less units
 	r_start=r_min*Ggrav*Msolar/clight/clight/1.0e5;				//F.'s starting r_start = epsilon in my dim'less units (km/km)
 
 	initRho[1] = 1.0*eps_min;
-	for (i=2;i<=nEpsilon;i++) initRho[i] = initRho[i-1]*1.03;		//Scale starting mass density values
+	for (i=2;i<=nEpsilon;i++) initRho[i] = initRho[i-1]*1.07;		//Scale starting mass density values
 
 	for (j=1;j<=nEpsilon;j++)						//Convert initial mass densities to energy densities
 	{	
@@ -62,14 +60,13 @@ extern void tov()
 
 	rkdriver(initEpsilon, initRho, initM, r_start, Pedge);			//Call Runge-Kutta integrating function
 
-	for (j=1;j<=nEpsilon;j++)  inertia[j] = scaleI(j);			//Scale the trial moment of inertia, as in Kalogera & Psaltis 99
+	//for (j=1;j<=nEpsilon;j++)  inertia[j] = scaleI(j);			//Scale the trial moment of inertia, as in Kalogera & Psaltis 99
 
-	free_dvector(initRho, 1, nEpsilon);
 	free_dvector(initEpsilon, 1, nEpsilon);
 	free_dvector(initM, 1, nEpsilon);
-	free_dvector(y_i,1,nEpsilon);
-	free_dvector(y_v,1,nEpsilon);
-	free_dvector(y_f,1,nEpsilon);
+	//free_dvector(y_i,1,nEpsilon);
+	//free_dvector(y_v,1,nEpsilon);
+	//free_dvector(y_f,1,nEpsilon);
 	free_dvector(centralP,1,nEpsilon);
 
 }
@@ -99,15 +96,15 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 	vout=dvector(1,nODEs);
 	dv=dvector(1,nODEs);
 
-	y_v=dvector(1,nEpsilon);					//Assign memory for nu
-	y_f=dvector(1,nEpsilon);					//Assign memory for f
-	y_i=dvector(1,nEpsilon);					//Assign memory for I (unscaled)
+	//y_v=dvector(1,nEpsilon);					//Assign memory for nu
+	//y_f=dvector(1,nEpsilon);					//Assign memory for f
+	//y_i=dvector(1,nEpsilon);					//Assign memory for I (unscaled)
 	centralP=dvector(1,nEpsilon);
 
 	for (i=1; i<=nEpsilon; i++)					//Step through all values of rho_c
 	{
-	  for (index=1; index<=2; index++)				//Loop through each rho_c twice, to determine starting value of nu
-	  {	
+	  //for (index=1; index<=2; index++)				//Loop through each rho_c twice, to determine starting value of nu
+	  //{	
 		r=r1;							//First step located at initial radius
 		v_eps=initEpsilon[i];           			//Load initial values for density, rho
 
@@ -118,7 +115,7 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 			v[2]=EOSpressure(initRho[i],1); 		//or the full PARAMETRIZED version of the normal EoS if not low-density
 		centralP[i] = v[2];
 
-		if (index==1) 
+		/*if (index==1) 
 			v[3]=1.0;					//Load initial value for nu at center = 0
 		else
 			v[3]=findnu(i);
@@ -126,6 +123,7 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 		v[4]=1.0;						//Initial f at center -- of order unity, will be scaled!
 		v[5]=0.0;						//Initial cassi = df/dr = 0 (at center)
 		v[6]=0.0;						//Load initial mom of I
+		*/
 
 		k=1;	
 		while (k <= nstep && v[2] >= p_edge*centralP[i])		//Keep stepping until P_edge (v_p) is negligible or exceed nstep	
@@ -135,7 +133,7 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 			h_Mstep = v[1] / (3.0*r*r*v_eps);				// at each step
 			hthisstep = min(fabs(h_Pstep), fabs(h_Mstep))*hscale;
 
-			for (j=1;j<=nODEs;j++) dv[j]=derivs(j,r,v[1],v[2],v[3],v[4],v[5]); 	//Get initial derivs for all 6 funcs
+			for (j=1;j<=nODEs;j++) dv[j]=derivs(j,r,v);      //,v[3],v[4],v[5]); 	//Get initial derivs for all 6 funcs
 
 			rk4(v_eps, v, dv, r, hthisstep, vout, &vout_eps);
 
@@ -144,10 +142,10 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 		   	v_eps=vout_eps;	    					//Save updated terms
 			v[1]=vout[1];	    					//mass				
 			v[2]=vout[2];	    					//pressure	
-			v[3]=vout[3];	    					//nu			
+			/*v[3]=vout[3];	    					//nu			
 			v[4]=vout[4];	    					//f_trial	
 			v[5]=vout[5];	    					//cassi		
-			v[6]=vout[6];						//I_trial
+			v[6]=vout[6];*/						//I_trial
 			k+=1;							//Increase the stepper
 
 			if (k-1==nstep && v[2] >= p_edge*centralP[i])		//Verify that we've actually reached edge w/in nsteps
@@ -155,12 +153,12 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 		}
 		rr[i] = r;							//Save the total neutron star radius,
 		y_m[i] = v[1];							//mass
-		y_v[i] = v[3];							//nu (so it can be scaled)
-		y_f[i] = v[4];							//f_trial
-		y_i[i] = v[6];							//and I_trial
-		if (index==1) iter=k;
+		//y_v[i] = v[3];							//nu (so it can be scaled)
+		//y_f[i] = v[4];							//f_trial
+		//y_i[i] = v[6];							//and I_trial
+		//if (index==1) iter=k;
 
-	  }
+	  //}
 	}
 
 	free_dvector(v,1,nODEs);
@@ -194,15 +192,15 @@ void rk4(double y_eps, double y[], double dydr[], double r, double h,
     	rh = r+hh;           								//Midpoint x-value
 	
 	for (j=1;j<=nODEs;j++) yt[j] = y[j] + hh*dydr[j];				//First step
-	for (j=1;j<=nODEs;j++) dyt[j]=derivs(j,rh,yt[1],yt[2],yt[3],yt[4],yt[5]); 	//Second step
+	for (j=1;j<=nODEs;j++) dyt[j]=derivs(j,rh,yt);				 	//Second step
 	for (j=1;j<=nODEs;j++) yt[j] = y[j] + hh*dyt[j];
-	for (j=1;j<=nODEs;j++) dym[j]=derivs(j,rh,yt[1],yt[2],yt[3],yt[4],yt[5]);	 //Third step			 						
+	for (j=1;j<=nODEs;j++) dym[j]=derivs(j,rh,yt);					 //Third step			 						
 	for (j=1;j<=nODEs;j++) 
 	{
 		yt[j] = y[j] + h*dym[j];
 		dym[j] += dyt[j];
 	}	
-	for (j=1;j<=nODEs;j++) dyt[j]=derivs(j,r+h,yt[1],yt[2],yt[3],yt[4],yt[5]);	//Fourth step
+	for (j=1;j<=nODEs;j++) dyt[j]=derivs(j,r+h,yt);	//Fourth step
 	for (j=1;j<=nODEs;j++) yout[j] = y[j]+h6*(dydr[j]+dyt[j]+2.0*dym[j]);		//Accumulate increments with proper weights
 	if (yout[2] <= Ppts[1]) 							//Calculate final energy density at 3rd step from inverse EOS
 		*yout_eps = EOSdensity(yout[2],0);					//Using SLY if in the low-density regime
@@ -324,11 +322,21 @@ double EOSdensity(double pressure, int useparam)
 }
 
   
-double derivs(int j, double r, double mass, double pressure, double nu, double f, double cassi)   
+double derivs(int j, double r, double array[])  
 /* Calculate dimensionless derivatives for dM/dr, dP/dr, and dI/dr
    Order ALWAYS: M, P, v, f, cassi, I
 */
 {
+
+	double mass, pressure, nu, f, cassi;
+	mass = array[1];
+	pressure = array[2];
+	if (nODEs > 2)
+	{
+		nu = array[3];
+		f = array[4];
+		cassi = array[5];
+	}
 
 	double density;
 
@@ -373,27 +381,27 @@ double derivs(int j, double r, double mass, double pressure, double nu, double f
 	return 0.;
 }
 
-double scaleI(int j)
+//double scaleI(int j)
 /* Calculate the scaled moment of inertia, using the trial I and f values
    (as in Eq. 16 in KP99) AND convert back into CGS units
 */
-{
+/*{
 	return y_i[j]*(Msolar*1.0e10) / ( y_f[j] + 
 		  2.0*y_i[j]*(Msolar*1.0e10)*Ggrav/(clight*clight*rr[j]*rr[j]*rr[j]*1.0e15) );
-}
+}*/
 
 
-double findnu(int j)
+//double findnu(int j)
 /* Calculate the scaled value for nu at the center (r=0), to use as nu_initial
    in the second iteration of the main program. Use boundary condition:
    nu(R_ns) = ln[1 - 2 M_ns/R_ns]
 */
-{
+/*{
 	double nu_R;	
  	nu_R=log(1.0-2.0*y_m[j]*Msolar*Ggrav/(rr[j]*1.0e5*clight*clight) );	//nu at surface of star
 	return 1.0 - y_v[j] + nu_R;						//New nu_c = Old nu_c - (nu_surface_actual - nu_surface_required)
 
-}
+}*/
 
 extern double param_massToEnergy(double massdensity)
 /* Given a mass density, return an energy density, using only the parametrization points
