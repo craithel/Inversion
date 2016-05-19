@@ -12,33 +12,24 @@ gcc inversion.c ../nrutil.c mtwist-1.5/mtwist.c useful_funcs.c tov_polyparam.c -
 #include "header.h"
 #include "mtwist-1.5/mtwist.h"
 
-#define nMC 1000
+#define nMC 25000
 #define sigma_q 5e-6
-#define nData 4
 
-double (*Ppts);								//-------------------------------------------------------//  
-double (*rhopts);							// Re-initialize GLOBAL variables defined in header file //
-double (*gamma0_param);							//							 //
-double (*acoef_param);							//							 //
-double (*p_SLY);							//							 //
-double (*epsilon_SLY);							//							 //
-double (*rho_SLY);							//							 //
-double (*y_m);						   		//							 //
-double (*inertia);							//							 //	
-double (*rr);    					   		//							 //
+double *Ppts,*rhopts;							//-------------------------------------------------------//  
+double *gamma0_param, *acoef_param;					// Re-initialize GLOBAL variables defined in header file //
+double *p_SLY, *epsilon_SLY, *rho_SLY;					//							 //
+double *y_m, *initRho, *rr;				   		//							 //
+double *m_data, *r_data, *m_sigma, *r_sigma;				//							 //
 double p_ns;								//							 //
 int numlinesSLY;							//-------------------------------------------------------//
 							
-double *allP1, *allP2, *allP3, *allP4, *allP5, *allPosts;		//accepted values of Ppts and corresponding posteriors
-
 void getRhoPts();
-double integrateM(double unMarg_L[]);
+double integrateRhoC(double unMarg_L[]);
 double findP_inSLY(double rho0);
 void readinSLY(double p[], double epsilon[], double rho[]);						
 double prior_P(int j, double maxM);
 double getPosterior(double m_data[], double m_sigma[], double r_data[], double r_sigma[]);
 double gaussian(double mean, double sigma);
-void savevalues(double acceptedP[], double posterior, int iMC);
 void revertP(double Ppts_old[]);
 double getCausalGamma(int j);
 
@@ -49,41 +40,6 @@ int main()
 	double r, posterior_old, posterior_new;
 	double ratio, scriptP,step;
 	double *Ppts_old;
-
-	double *m_data, *r_data;
-	double *m_sigma, *r_sigma;
-
-	m_data = dvector(1,nData+1);
-	r_data = dvector(1,nData+1);
-	m_sigma = dvector(1,nData+1);
-	r_sigma = dvector(1,nData+1);
-
-
-	//double m_data[nData+1], r_data[nData+1];
-	//double m_sigma[nData+1], r_sigma[nData+1];	
-	m_data[1] = 1.42807;
-	m_data[2] = 1.55430;
-	m_data[3] = 1.67082;
-	m_data[4] = 1.80639;
-	m_sigma[1] = 0.1;
-	m_sigma[2] = 0.1;
-	m_sigma[3] = 0.1;
-	m_sigma[4] = 0.1;
-	r_data[1] = 11.75985;
-	r_data[2] = 11.65278;
-	r_data[3] = 11.51940;
-	r_data[4] = 11.51940;
-	r_sigma[1] = 0.5;
-	r_sigma[2] = 0.5;
-	r_sigma[3] = 0.5;
-	r_sigma[4] = 0.5;
-
-	allP1 = dvector(1,nMC+1);
-	allP2 = dvector(1,nMC+1);
-	allP3 = dvector(1,nMC+1);
-	allP4 = dvector(1,nMC+1);
-	allP5 = dvector(1,nMC+1);
-	allPosts = dvector(1,nMC+1);
 	Ppts_old = dvector(1, nparam+1);
 
 	Ppts = dvector(1,nparam+1);				//-------------------------------------------------------//  
@@ -94,12 +50,18 @@ int main()
 	epsilon_SLY = dvector(1, lines);			//							 //
 	rho_SLY = dvector(1, lines);				//							 //
 	rr = dvector(1,nEpsilon);				//							 //			
-	y_m = dvector(1,nEpsilon);				//							 //				
-	inertia = dvector(1,nEpsilon);				//-------------------------------------------------------//  					
-
+	y_m = dvector(1,nEpsilon);				//							 //
+	initRho = dvector(1,nEpsilon);				//							 //
+	m_data = dvector(1,nData+1);				//							 //
+	r_data = dvector(1,nData+1);				//							 //
+	m_sigma = dvector(1,nData+1);				//							 //
+	r_sigma = dvector(1,nData+1);				//-------------------------------------------------------//  				
 
         readinSLY(p_SLY,epsilon_SLY, rho_SLY);                    	//Read in the low-density data from SLY
 	getRhoPts();							//Get the fiducial densities
+
+	getMR();
+
 	double *test;
 	test = dvector(1,7);
 	test[1]=1.001;
@@ -109,32 +71,26 @@ int main()
 	test[5]=1.0018;
 	test[6]=0.9984;
 	for (i=1; i<=nparam; i++) 
-		Ppts[i] = findP_inSLY(rhopts[i])*test[i];			//Starting Ppts = SLy values
+		Ppts[i] = findP_inSLY(rhopts[i])*test[i];			//Starting Ppts = dithered from SLy values
 	
-	//char filename[260] = "inversion_output.txt";
-	//FILE *f = fopen(filename,"w");
-	//fprintf(f,"File created by inversion.c, assuming a 5-polytrope parametrized EoS throughout the star \n");
-	//fprintf(f,"%d MC points used \n",nMC);
-	//fprintf(f,"Posterior   P_1      P_2         P_3        P_4         P_5 \n");
-
-
-	printf("File created by inversion.c, assuming a 5-polytrope parametrized EoS throughout the star \n");
-	printf("%d MC points used \n",nMC);
-	printf("Posterior   P_1      P_2         P_3        P_4         P_5 \n");
+	char filename[260] = "inversion_output.txt";
+	FILE *f = fopen(filename,"w");
+	fprintf(f,"File created by inversion.c, assuming a 5-polytrope parametrized EoS throughout the star \n");
+	fprintf(f,"%d MC points used \n",nMC);
+	fprintf(f,"Posterior   P_1      P_2         P_3        P_4         P_5 \n");
 
 	int laststep_rejected = 0, toContinue;
 	int accepted=0;
+
+	tov();								//Get mass, radius, and moment of inertia for first set of Ppts
+	posterior_old = getPosterior(m_data, m_sigma, r_data, r_sigma);	//Get posterior likelihood for original set of Ppts
+
 	for (i=1; i<=nMC; i++)						//Loop through all the MC points 
 	{
 
-		if (i==1)
-		{
-			tov();								//Get mass, radius, and moment of inertia for first set of Ppts
-			posterior_old = getPosterior(m_data, m_sigma, r_data, r_sigma);	//Get posterior likelihood for original set of Ppts
-		}
-
 		if (i != 1 && laststep_rejected == 0)			//If we moved to a new step (rejected=0), use that posterior as the starting posterior
 			posterior_old = posterior_new;			// (otherwise, posterior_old is still posterior_old, so we don't have to update it)
+
 
 		toContinue=0;
 		for (j=1; j<=nparam; j++)
@@ -145,6 +101,8 @@ int main()
 			if (Ppts[j] < 0.)
 				toContinue=1;
 		}
+
+
 		if (toContinue==1)
 		{
 			posterior_new = 0.;			//If any Ppt < 0, the prior will be 0 so reject and move on
@@ -161,11 +119,8 @@ int main()
 		if (scriptP < ratio)					//If new P points are accepted
 		{
 			accepted+=1;
-			savevalues(Ppts, posterior_new, accepted);	//save the new set of Ppts and their corresponding likelihood	
 			laststep_rejected = 0;
-			
-			//fprintf(f,"%6.4f  %6.4e  %6.4e  %6.4e  %6.4e   %6.4e \n",allPosts[accepted],allP1[accepted]*p_char, allP2[accepted]*p_char,allP3[accepted]*p_char,allP4[accepted]*p_char,allP5[accepted]*p_char);
-			printf("%6.4f  %6.4e  %6.4e  %6.4e  %6.4e   %6.4e \n",allPosts[accepted],allP1[accepted]*p_char, allP2[accepted]*p_char,allP3[accepted]*p_char,allP4[accepted]*p_char,allP5[accepted]*p_char);
+			fprintf(f, "%e  %6.4e  %6.4e  %6.4e  %6.4e   %6.4e \n",posterior_new, Ppts[1]*p_char, Ppts[2]*p_char,Ppts[3]*p_char,Ppts[4]*p_char,Ppts[5]*p_char);
 		}
 		else
 		{
@@ -177,8 +132,7 @@ int main()
 
 	//double frac_accepted = accepted*1.0/nMC;
 
-	//fclose(f);	
-	//printf("Saved to file %s\n", filename);
+	fclose(f);	
 
 	free_dvector(test,1,7);
 	free_dvector(m_data,1,nData+1);
@@ -186,18 +140,12 @@ int main()
 	free_dvector(m_sigma,1,nData+1);
 	free_dvector(r_sigma,1,nData+1);
 	free_dvector(Ppts_old,1,nparam+1);
-	free_dvector(allP1, 1, nMC+1);
-	free_dvector(allP2, 1, nMC+1);
-	free_dvector(allP3, 1, nMC+1);
-	free_dvector(allP4, 1, nMC+1);
-	free_dvector(allP5, 1, nMC+1);
-	free_dvector(allPosts, 1, nMC+1);
 	free_dvector(rho_SLY, 1, lines);
 	free_dvector(epsilon_SLY, 1, lines);
 	free_dvector(p_SLY, 1, lines);
 	free_dvector(rr,1,nEpsilon);
 	free_dvector(y_m,1,nEpsilon);
-	free_dvector(inertia, 1, nEpsilon);
+	free_dvector(initRho, 1, nEpsilon);
 	free_dvector(rhopts,1,nparam+1);
 	free_dvector(Ppts,1,nparam+1);
 	free_dvector(acoef_param,1,nparam);
@@ -205,16 +153,6 @@ int main()
 
 	return 0;
 }
-
-void savevalues(double acceptedP[], double posterior, int iMC)
-{
-	allP1[iMC] = acceptedP[1];
-	allP2[iMC] = acceptedP[2];
-	allP3[iMC] = acceptedP[3];
-	allP4[iMC] = acceptedP[4];
-	allP5[iMC] = acceptedP[5];
-	allPosts[iMC] = posterior;
-}  
 
 void revertP(double Ppts_old[])
 {
@@ -230,13 +168,16 @@ double getPosterior(double m_data[], double m_sigma[], double r_data[], double r
 	double *unMarg_L;
 	unMarg_L = dvector(1, nEpsilon+1);
 
+
 	likelihood = 1.0;					//P(data | P1, ..., P5)
 	for (k=1; k<=nData; k++)
 	{
 		for (j=1; j<=nEpsilon; j++)
 			unMarg_L[j] = exp(-(m_data[k] - y_m[j])*(m_data[k] - y_m[j])/(2.*m_sigma[k]*m_sigma[k]) - (r_data[k] - rr[j])*(r_data[k] - rr[j])/(2.*r_sigma[k]*r_sigma[k]) );
-		likelihood *= integrateM(unMarg_L);
+		likelihood *= integrateRhoC(unMarg_L);
 	}
+
+
 
 	maxM = max_array(y_m,nEpsilon);				//the maximum mass achieved for this set of P1, ..., P5
 	posterior = likelihood;
@@ -250,7 +191,6 @@ double getPosterior(double m_data[], double m_sigma[], double r_data[], double r
 
 double prior_P(int j, double maxM)
 {
-	double causal_g = getCausalGamma(j); 
 	double prior=1.0;
 
 	/* Prior on P1:  P1 >= P_sat(sly), then that P1 is not allowed	*/
@@ -258,7 +198,7 @@ double prior_P(int j, double maxM)
 		prior=0.;
 
 	/*  Priors: P_i > P_(i-1), the gamma leading up to P_i must not be acausal, M_max >= 1.97 */
-	if (j > 1 && (Ppts[j] < Ppts[j-1] || gamma0_param[j-1] > causal_g || maxM < 1.97))  		
+	if (j > 1 && (Ppts[j] < Ppts[j-1] || gamma0_param[j-1] > getCausalGamma(j) || maxM < 1.97))  		
 		prior=0.;
 
 	return prior;
@@ -266,7 +206,7 @@ double prior_P(int j, double maxM)
 
 
 	
-double integrateM(double unMarg_L[])
+double integrateRhoC(double unMarg_L[])
 /*
  For the M-R curve from a given set of (P1, ..., P5), marginalize over
  rho_c. Note, the margalization over rho_c is the same as marginalizing 
@@ -275,29 +215,29 @@ double integrateM(double unMarg_L[])
  P(Mi, Ri | P1,... P5) = Integral P(Mi, Ri | P1,P2,P3)P_pr(rho_c) d rho_c 
  P(M, R | P1,... P5) = C*Integral_Mmin^Mmax P(M, R(M) | P1,... P5) P_pr(M) dM
  
+ For now: integrate over rho_c, with flat priors in rho_c
+
 */ 
 {	
-	int j;
-	double lowerM, upperM;
-	double lowerM_index, upperM_index;
-	double likelihood = unMarg_L[1];
-	double prior_M = 1.0;
-
-	lowerM = min_array(y_m, nEpsilon);
-	upperM = max_array(y_m, nEpsilon);
-
-	if (lowerM > 0.1)	
+	int j, index;
+	int ngrid = 200;
+	double likelihood = 0.;
+	double prior_rho = 1.0;
+	double deltaRho = (initRho[nEpsilon]-initRho[1])/(ngrid);
+	double rho_i, m, intercept, unMarg_L_i;
+	rho_i = initRho[1];
+	
+	for (j=1; j<=ngrid; j++)
 	{
-		printf("warning: min M = %f > 0.1\n Terminating program.\n",lowerM);
-		exit(0); 
-	} 
-
-	lowerM_index = bisection(0.1, y_m, nEpsilon);				//Find the index corresponding to M=0.1
-	upperM_index = bisection(upperM, y_m, nEpsilon);			//Find the index corresponding to Mmax
-
-	for (j=lowerM_index; j<=upperM_index-1;j++)
-		likelihood += unMarg_L[j+1]*(y_m[j+1]-y_m[j])*prior_M;
-
+		index = bisection(rho_i, initRho, nEpsilon);		//Find the nearest value of rho_c that was actually calculated
+		m = (unMarg_L[index] - unMarg_L[index+1]) /		//Calculate the slope to linearly interpolate btwn 2 calculated rho_c's 
+		    (initRho[index] - initRho[index+1]);	
+		intercept = unMarg_L[index] - m*initRho[index];		//Calculate y-intercept
+		unMarg_L_i = m*rho_i + intercept;			//Find linear interpolation of the likelihood
+	
+		likelihood += unMarg_L_i*prior_rho*deltaRho;
+		rho_i += deltaRho;
+	}
 	return likelihood;
 }
 
