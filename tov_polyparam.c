@@ -14,60 +14,56 @@
 //static double scaleI(int j);							//Prototype func to scale I_trial
 static void getGammaA();							//Prototype func to calculate gamma and a_coef along each segment given Ppts
 static double EOSdensity(double pressure, int useparam);	   		//Prototype func for the EOS, P=P(rho)	
-static double EOSpressure(double massdensity, int useparam);    		//Prototype func for the EOS, P=P(rho)
 static double derivs(int i, double r, double array[]);			 	//Prototype func for 6 ODEs: dP/dr, dM/dr, dv/dr and (3 for) dI/dr
 static void rkdriver(double initEpsilon[], double initRho[], double initM[],	//Prototype func for Runge-Kutta integration driver function
 	      double r1,double p_edge); 
 	
-static double *centralP;							//Initialize global array to save central pressures
+//static double *centralP;							//Initialize global array to save central pressures
 //static double (*y_v);						   		//Initialize global array to save solutions for nu (from metric)
 //static double (*y_f);						   		//Initialize global array to save solutions for f = 1-w/Omega
 //static double (*y_i);						   		//Initialize global array to save solutions for f = 1-w/Omega
 static int iter;
+static double *Ppts;							
+double *gamma0_param, *acoef_param;					
+double *y_m, *initRho, *rr;		
 
-extern void tov()
+
+extern void tov(double Ppts_in[], double *rr_in, double *y_m_in, double *gamma0_param_in)
 /* Main driver function to get M and  R (moment of inertia disabled)
    by solving the TOV equations (+ ODEs for I)
 */
 {
 
-	double *initEpsilon, *initM;
-	double Pedge, r_start;	
-	int i,j,k, EoSindex, index;								
+	//double *initEpsilon, *initM;
+	//double Pedge, r_start;	
+	int i,j,k, EoSindex, index;	
+
+	Ppts = dvector(1,nparam+1);				
+	acoef_param = dvector(1,nparam);	
+	gamma0_param = gamma0_param_in;			//Set the global pointer for gamma0_param to the location of gamma0 from the main() func in inversion	
+	rr = rr_in;
+	y_m = y_m_in;
+	//initRho = initRho_in;						
+
+	for (i=1; i<= nEpsilon; i++)
+		Ppts[i] = Ppts_in[i];													
 	
 	getGammaA();								//Find Gamma and a_coef along each segment, given Ppts
 
-	initEpsilon=dvector(1,nEpsilon);
-	initM=dvector(1,nEpsilon);																		
-	
-	p_ns = EOSpressure(rho_ns, 0);						//Pressure at rho_saturation according to SLy (0=don't use param version of EOS)
-	
-	Pedge=ACCURACY*pow(clight,8.0)/(Ggrav*Ggrav*Ggrav*Msolar*Msolar);	//F.'s P_edge criteria in cgs units
-	Pedge/=p_char;								//F.'s P_edge criteria in my dim'less units
-	r_start=r_min*Ggrav*Msolar/clight/clight/1.0e5;				//F.'s starting r_start = epsilon in my dim'less units (km/km)
-
-	initRho[1] = 1.0*eps_min;
-	for (i=2;i<=nEpsilon;i++) initRho[i] = initRho[i-1]*1.07;		//Scale starting mass density values
-
-	for (j=1;j<=nEpsilon;j++)						//Convert initial mass densities to energy densities
-	{	
-		if (initRho[j] <= rhopts[1])
-			initEpsilon[j] = findEps0_inSLY(initRho[j]);
-		else	
-			initEpsilon[j] = param_massToEnergy(initRho[j]);
-		initM[j] = r_start*r_start*r_start*initEpsilon[j];		//Initial masses enclosed by r_start = epsilon
-	}
 
 	rkdriver(initEpsilon, initRho, initM, r_start, Pedge);			//Call Runge-Kutta integrating function
 
 	//for (j=1;j<=nEpsilon;j++)  inertia[j] = scaleI(j);			//Scale the trial moment of inertia, as in Kalogera & Psaltis 99
 
-	free_dvector(initEpsilon, 1, nEpsilon);
-	free_dvector(initM, 1, nEpsilon);
+	free_dvector(Ppts, 1, nparam+1);
+	free_dvector(gamma0_param, 1, nparam);
+	free_dvector(acoef_param, 1, nparam);
+	//free_dvector(initEpsilon, 1, nEpsilon);
+	//free_dvector(initM, 1, nEpsilon);
 	//free_dvector(y_i,1,nEpsilon);
 	//free_dvector(y_v,1,nEpsilon);
 	//free_dvector(y_f,1,nEpsilon);
-	free_dvector(centralP,1,nEpsilon);
+	//free_dvector(centralP,1,nEpsilon);
 
 }
 
@@ -99,7 +95,7 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 	//y_v=dvector(1,nEpsilon);					//Assign memory for nu
 	//y_f=dvector(1,nEpsilon);					//Assign memory for f
 	//y_i=dvector(1,nEpsilon);					//Assign memory for I (unscaled)
-	centralP=dvector(1,nEpsilon);
+	//centralP=dvector(1,nEpsilon);
 
 	for (i=1; i<=nEpsilon; i++)					//Step through all values of rho_c
 	{
@@ -109,12 +105,7 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 		v_eps=initEpsilon[i];           			//Load initial values for density, rho
 
 		v[1]=initM[i];             				//Load initial values for M
-		if (initRho[i] <= rhopts[1])
-			v[2]=EOSpressure(initRho[i],0);			//Load initial values for P_init = P(Rho_init) using full SLy EoS if low-density
-		else
-			v[2]=EOSpressure(initRho[i],1); 		//or the full PARAMETRIZED version of the normal EoS if not low-density
-		centralP[i] = v[2];
-
+		v[2]=centralP[i];
 		/*if (index==1) 
 			v[3]=1.0;					//Load initial value for nu at center = 0
 		else
@@ -212,7 +203,7 @@ void rk4(double y_eps, double y[], double dydr[], double r, double h,
 
 }
 
-double EOSpressure(double massdensity, int useparam)
+extern double EOSpressure(double massdensity, int useparam)
 /* Find the EoS pressure given a density, by searching through the tabulated
  values of pressure and density. Use bisection method to search.	
 */
@@ -341,9 +332,9 @@ double derivs(int j, double r, double array[])
 	double density;
 
 	if (pressure <= Ppts[1])				 	//Find the energy density for the given pressure
- 		density=EOSdensity(pressure,0); //Using SLy if low-density
+ 		density=EOSdensity(pressure,0); 			//Using SLy if low-density
 	else
-		density=EOSdensity(pressure,1); //And PARAMETRIZED EoS otherwise	
+		density=EOSdensity(pressure,1); 			//And PARAMETRIZED EoS otherwise	
 
 	if (j==1)							//Return dimensionless form of dM/dr
 	{	

@@ -26,20 +26,23 @@
 #define ACCURACY 1.0e-15
 #define rho_ns 5.688e-4							//Unitless nuclear saturation density = (rho_ns / solar mass)*(4/3 pi (1km)^3)
 
-extern double *Ppts, *rhopts;
-extern double *gamma0_param, *acoef_param;
+extern double *rhopts; //*Ppts;
+//extern double *gamma0_param, *acoef_param;
 extern double *p_SLY, *epsilon_SLY, *rho_SLY;
-extern double *y_m;						   		//Initialize global array to save solutions for mass
-extern double *rr;    						   		//Initialize global array to save steps taken
-extern double *initRho;						   
+//extern double *y_m;						   		//Initialize global array to save solutions for mass
+//extern double *rr;    						   		//Initialize global array to save steps taken
+//extern double *initRho;						   
 extern double p_ns;
 extern int numlinesSLY;	
 extern double *m_data, *r_data;
 extern double *m_sigma, *r_sigma;						
+extern double *initRho, *initM, *initEpsilon, *centralP;
+extern double Pedge, r_start;
 
-
-extern void tov();
+extern void tov(double Ppts_in[], double *rr_in, double *y_m_in, double *gamma0_param_in);
 extern void getMR();
 extern double findEps0_inSLY(double rho0);					//Prototype func to find Epsilon corresponding to a Rho using SLy
 extern double param_massToEnergy(double massdensity);				//Prototype func for Eps(rho), assuming a polytropic EoS
+extern double EOSpressure(double massdensity, int useparam);
+
 

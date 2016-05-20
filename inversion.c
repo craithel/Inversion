@@ -15,23 +15,26 @@ gcc inversion.c ../nrutil.c mtwist-1.5/mtwist.c useful_funcs.c tov_polyparam.c -
 #define nMC 25000
 #define sigma_q 5e-6
 
-double *Ppts,*rhopts;							//-------------------------------------------------------//  
-double *gamma0_param, *acoef_param;					// Re-initialize GLOBAL variables defined in header file //
+double *rhopts; //*Ppts,;							//-------------------------------------------------------//  
+//double *gamma0_param, *acoef_param;					// Re-initialize GLOBAL variables defined in header file //
 double *p_SLY, *epsilon_SLY, *rho_SLY;					//							 //
-double *y_m, *initRho, *rr;				   		//							 //
+//double *y_m, *initRho, *rr;				   		//							 //
 double *m_data, *r_data, *m_sigma, *r_sigma;				//							 //
 double p_ns;								//							 //
+double *initM, *initRho, *initEpsilon, *centralP;
+double r_start, Pedge;
 int numlinesSLY;							//-------------------------------------------------------//
 							
 void getRhoPts();
 double integrateRhoC(double unMarg_L[]);
 double findP_inSLY(double rho0);
 void readinSLY(double p[], double epsilon[], double rho[]);						
-double prior_P(int j, double maxM);
-double getPosterior(double m_data[], double m_sigma[], double r_data[], double r_sigma[]);
+double prior_P(int j,  double Ppts_local[], double gamma0_param[], double maxM);
+double getPosterior(double Ppts_local[], double gamma0_param[], double mm[], 
+		    double m_data[], double m_sigma[], double rr[], double r_data[], double r_sigma[]);
 double gaussian(double mean, double sigma);
-void revertP(double Ppts_old[]);
-double getCausalGamma(int j);
+void revertP(double Ppts_new[], double Ppts_old[]);
+double getCausalGamma(int j, double Ppts_local[]);
 
 int main()
 {
@@ -39,19 +42,25 @@ int main()
 	int i,j;
 	double r, posterior_old, posterior_new;
 	double ratio, scriptP,step;
-	double *Ppts_old;
-	Ppts_old = dvector(1, nparam+1);
+	double *Ppts_old, *Ppts_new;
+	double *mm, *rr, *gamma0_param;
 
-	Ppts = dvector(1,nparam+1);				//-------------------------------------------------------//  
+	Ppts_old = dvector(1, nparam+1);
+	Ppts_new = dvector(1, nparam+1);
+
+	gamma0_param = dvector(1,nparam);
+	mm = dvector(1, nEpsilon);
+	rr = dvector(1, nEpsilon);							
+
+
 	rhopts = dvector(1,nparam+1);				// Allocate memory for GLOBAL variables in header file   //
-	gamma0_param = dvector(1,nparam);			//							 //						
-	acoef_param = dvector(1,nparam);			//							 //							
 	p_SLY = dvector(1, lines);			 	//							 //
 	epsilon_SLY = dvector(1, lines);			//							 //
 	rho_SLY = dvector(1, lines);				//							 //
-	rr = dvector(1,nEpsilon);				//							 //			
-	y_m = dvector(1,nEpsilon);				//							 //
-	initRho = dvector(1,nEpsilon);				//							 //
+	initEpsilon=dvector(1,nEpsilon);			//							 //	
+	initM=dvector(1,nEpsilon);				//							 //							
+	initRho = dvector(1, nEpsilon);				//							 //	
+	centralP = dvector(1, nEpsilon);			//							 //	
 	m_data = dvector(1,nData+1);				//							 //
 	r_data = dvector(1,nData+1);				//							 //
 	m_sigma = dvector(1,nData+1);				//							 //
@@ -59,8 +68,31 @@ int main()
 
         readinSLY(p_SLY,epsilon_SLY, rho_SLY);                    	//Read in the low-density data from SLY
 	getRhoPts();							//Get the fiducial densities
+	p_ns = findP_inSLY(rho_ns);					//Pressure at rho_saturation according to SLy 
+	getMR();							//get mock MR data, dithered from SLy values
+	
+	Pedge=ACCURACY*pow(clight,8.0)/(Ggrav*Ggrav*Ggrav*Msolar*Msolar);	//F.'s P_edge criteria in cgs units
+	Pedge/=p_char;								//F.'s P_edge criteria in my dim'less units
+	r_start=r_min*Ggrav*Msolar/clight/clight/1.0e5;				//F.'s starting r_start = epsilon in my dim'less units (km/km)
 
-	getMR();
+	initRho[1] = 1.0*eps_min;
+	for (i=2;i<=nEpsilon;i++) initRho[i] = initRho[i-1]*1.07;		//Scale starting mass density values
+
+	for (j=1;j<=nEpsilon;j++)						//Convert initial mass densities to energy densities
+	{	
+		if (initRho[j] <= rhopts[1])
+		{
+			initEpsilon[j] = findEps0_inSLY(initRho[j]);
+			centralP[j] = EOSpressure(initRho[j],0);
+		}
+		else	
+		{		
+			initEpsilon[j] = param_massToEnergy(initRho[j]);
+			centralP[j] = EOSpressure(initRho[j],1);
+		}
+		initM[j] = r_start*r_start*r_start*initEpsilon[j];		//Initial masses enclosed by r_start = epsilon
+	}
+
 
 	double *test;
 	test = dvector(1,7);
@@ -71,7 +103,7 @@ int main()
 	test[5]=1.0018;
 	test[6]=0.9984;
 	for (i=1; i<=nparam; i++) 
-		Ppts[i] = findP_inSLY(rhopts[i])*test[i];			//Starting Ppts = dithered from SLy values
+		Ppts_new[i] = findP_inSLY(rhopts[i])*test[i];		//Starting Ppts = dithered from SLy values
 	
 	char filename[260] = "inversion_output.txt";
 	FILE *f = fopen(filename,"w");
@@ -82,8 +114,8 @@ int main()
 	int laststep_rejected = 0, toContinue;
 	int accepted=0;
 
-	tov();								//Get mass, radius, and moment of inertia for first set of Ppts
-	posterior_old = getPosterior(m_data, m_sigma, r_data, r_sigma);	//Get posterior likelihood for original set of Ppts
+	tov(Ppts_new, rr, mm, gamma0_param);				//Get mass, radius, and moment of inertia for first set of Ppts
+	posterior_old = getPosterior(Ppts_new,gamma0_param,mm, m_data, m_sigma,rr, r_data, r_sigma);	//Get posterior likelihood for original set of Ppts
 
 	for (i=1; i<=nMC; i++)						//Loop through all the MC points 
 	{
@@ -95,10 +127,10 @@ int main()
 		toContinue=0;
 		for (j=1; j<=nparam; j++)
 		{
-			Ppts_old[j] = Ppts[j];				//Save old Ppts to a temporary array
+			Ppts_old[j] = Ppts_new[j];				//Save old Ppts to a temporary array
 			step =  gaussian(0.,sigma_q);
-			Ppts[j] += step;				//Get new set of Ppts, one Gaussian step away from old
-			if (Ppts[j] < 0.)
+			Ppts_new[j] += step;				//Get new set of Ppts, one Gaussian step away from old
+			if (Ppts_new[j] < 0.)
 				toContinue=1;
 		}
 
@@ -107,12 +139,12 @@ int main()
 		{
 			posterior_new = 0.;			//If any Ppt < 0, the prior will be 0 so reject and move on
 			laststep_rejected = 1;
-			revertP(Ppts_old);
+			revertP(Ppts_new, Ppts_old);
 			continue;
 		}
 
-		tov();								//Get mass, radius, and I for NEW set of Ppts
-		posterior_new = getPosterior(m_data, m_sigma, r_data, r_sigma);	//Get posterior likelihood for NEW set of Ppts
+		tov(Ppts_new,rr, mm, gamma0_param);					//Get mass, radius, and I for NEW set of Ppts
+		posterior_new = getPosterior(Ppts_new, gamma0_param,mm, m_data, m_sigma,rr, r_data, r_sigma);	//Get posterior likelihood for NEW set of Ppts
 
 		ratio = posterior_new / posterior_old;
 		scriptP = mt_drand();					//Mersenne Twister pseudorandom double in [0,1) with 32 bits of randomness 
@@ -120,11 +152,11 @@ int main()
 		{
 			accepted+=1;
 			laststep_rejected = 0;
-			fprintf(f, "%e  %6.4e  %6.4e  %6.4e  %6.4e   %6.4e \n",posterior_new, Ppts[1]*p_char, Ppts[2]*p_char,Ppts[3]*p_char,Ppts[4]*p_char,Ppts[5]*p_char);
+			fprintf(f, "%e  %6.4e  %6.4e  %6.4e  %6.4e   %6.4e \n",posterior_new, Ppts_new[1]*p_char, Ppts_new[2]*p_char,Ppts_new[3]*p_char,Ppts_new[4]*p_char,Ppts_new[5]*p_char);
 		}
 		else
 		{
-			revertP(Ppts_old);				//Otherwise, go back to previous set of Ppts
+			revertP(Ppts_new, Ppts_old);				//Otherwise, go back to previous set of Ppts
 			laststep_rejected = 1;
 		}
 	}
@@ -140,28 +172,32 @@ int main()
 	free_dvector(m_sigma,1,nData+1);
 	free_dvector(r_sigma,1,nData+1);
 	free_dvector(Ppts_old,1,nparam+1);
+	free_dvector(Ppts_new,1,nparam+1);
 	free_dvector(rho_SLY, 1, lines);
 	free_dvector(epsilon_SLY, 1, lines);
 	free_dvector(p_SLY, 1, lines);
 	free_dvector(rr,1,nEpsilon);
-	free_dvector(y_m,1,nEpsilon);
+	free_dvector(mm,1,nEpsilon);
 	free_dvector(initRho, 1, nEpsilon);
 	free_dvector(rhopts,1,nparam+1);
-	free_dvector(Ppts,1,nparam+1);
-	free_dvector(acoef_param,1,nparam);
+	//free_dvector(Ppts,1,nparam+1);
+	//free_dvector(acoef_param,1,nparam);
 	free_dvector(gamma0_param,1,nparam);
+	free_dvector(initM,1,nEpsilon);
+	free_dvector(initEpsilon,1,nEpsilon);
+	free_dvector(centralP,1,nEpsilon);
 
 	return 0;
 }
 
-void revertP(double Ppts_old[])
+void revertP(double Ppts_new[], double Ppts_old[])
 {
 	int j;
 	for (j=1; j<=nparam; j++)
-		Ppts[j] = Ppts_old[j];
+		Ppts_new[j] = Ppts_old[j];
 }
 
-double getPosterior(double m_data[], double m_sigma[], double r_data[], double r_sigma[])
+double getPosterior(double Ppts_local[],  double gamma0_param[], double mm[], double m_data[], double m_sigma[], double rr[], double r_data[], double r_sigma[])
 {
 	int j,k;
 	double likelihood, posterior, maxM;
@@ -173,32 +209,32 @@ double getPosterior(double m_data[], double m_sigma[], double r_data[], double r
 	for (k=1; k<=nData; k++)
 	{
 		for (j=1; j<=nEpsilon; j++)
-			unMarg_L[j] = exp(-(m_data[k] - y_m[j])*(m_data[k] - y_m[j])/(2.*m_sigma[k]*m_sigma[k]) - (r_data[k] - rr[j])*(r_data[k] - rr[j])/(2.*r_sigma[k]*r_sigma[k]) );
+			unMarg_L[j] = exp(-(m_data[k] - mm[j])*(m_data[k] - mm[j])/(2.*m_sigma[k]*m_sigma[k]) - (r_data[k] - rr[j])*(r_data[k] - rr[j])/(2.*r_sigma[k]*r_sigma[k]) );
 		likelihood *= integrateRhoC(unMarg_L);
 	}
 
 
 
-	maxM = max_array(y_m,nEpsilon);				//the maximum mass achieved for this set of P1, ..., P5
+	maxM = max_array(mm,nEpsilon);				//the maximum mass achieved for this set of P1, ..., P5
 	posterior = likelihood;
 	for (j=1; j<=nparam; j++)
-		posterior *= prior_P(j,maxM);			//Multiply the posterior likelihood by the priors
+		posterior *= prior_P(j,Ppts_local, gamma0_param, maxM);			//Multiply the posterior likelihood by the priors
 	
 	free_dvector(unMarg_L,1, nEpsilon+1);
 
 	return posterior;
 }
 
-double prior_P(int j, double maxM)
+double prior_P(int j, double Ppts_local[], double gamma0_param[], double maxM)
 {
 	double prior=1.0;
 
 	/* Prior on P1:  P1 >= P_sat(sly), then that P1 is not allowed	*/
-	if (j==1 && Ppts[j] < p_ns)			
+	if (j==1 && Ppts_local[j] < p_ns)			
 		prior=0.;
 
 	/*  Priors: P_i > P_(i-1), the gamma leading up to P_i must not be acausal, M_max >= 1.97 */
-	if (j > 1 && (Ppts[j] < Ppts[j-1] || gamma0_param[j-1] > getCausalGamma(j) || maxM < 1.97))  		
+	if (j > 1 && (Ppts_local[j] < Ppts_local[j-1] || gamma0_param[j-1] > getCausalGamma(j, Ppts_local) || maxM < 1.97))  		
 		prior=0.;
 
 	return prior;
@@ -241,7 +277,7 @@ double integrateRhoC(double unMarg_L[])
 	return likelihood;
 }
 
-double getCausalGamma(int j)
+double getCausalGamma(int j, double Ppts_local[])
 /*Find the gamma that would correspond to a luminal EoS
   at the previous point {eps(i-1), P(i-1)}, using:
       Gamma * P/(P+eps) = (c_s)^2 = 1 
@@ -254,7 +290,7 @@ double getCausalGamma(int j)
 	else
 		eps_iMinus1 = param_massToEnergy(rhopts[j-1]);
 
-	gamma = (eps_iMinus1 + Ppts[j-1])/Ppts[j-1] ;
+	gamma = (eps_iMinus1 + Ppts_local[j-1])/Ppts_local[j-1] ;
 
 	return gamma;
 }
