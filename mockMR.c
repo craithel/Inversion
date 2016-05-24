@@ -32,6 +32,9 @@ extern void getMR()
 		}
 
 	}
+	
+	free_dvector(mass,1,lines);
+	free_dvector(radius,1,lines);
 }
 
 static void readinMR(double mass[], double radius[])
@@ -39,14 +42,14 @@ static void readinMR(double mass[], double radius[])
 {
 
 	int i=1,j;
-	char buff[256];
+	char buff[512];
 	char ep[lines], rhoc[lines], pc[lines], I[lines];
 
 	FILE *file;
 	file = fopen("/gsfs1/xdisk/craithel/tov_sly.txt","rt");
-	fgets(buff, 256, file);
-	fgets(buff, 256, file);
-	fgets(buff, 256, file);
+	fgets(buff, 512, file);
+	fgets(buff, 512, file);
+	fgets(buff, 512, file);
 
 	while ( fscanf(file,"%s %s %s %le %le %s", &ep[i], &rhoc[i], &pc[i], &radius[i], &mass[i], &I[i]) == 6 ) i++;	
 	numlines=i;

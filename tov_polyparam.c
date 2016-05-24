@@ -12,52 +12,46 @@
 
 //static double findnu(int j);							//Prototype func to calculate nu, given an initial guess ~1
 //static double scaleI(int j);							//Prototype func to scale I_trial
-static void getGammaA();							//Prototype func to calculate gamma and a_coef along each segment given Ppts
 static double EOSdensity(double pressure, int useparam);	   		//Prototype func for the EOS, P=P(rho)	
 static double derivs(int i, double r, double array[]);			 	//Prototype func for 6 ODEs: dP/dr, dM/dr, dv/dr and (3 for) dI/dr
-static void rkdriver(double initEpsilon[], double initRho[], double initM[],	//Prototype func for Runge-Kutta integration driver function
-	      double r1,double p_edge); 
-	
+static void rkdriver(double r1,double p_edge); 	//Prototype func for Runge-Kutta integration driver function
+
 //static double *centralP;							//Initialize global array to save central pressures
 //static double (*y_v);						   		//Initialize global array to save solutions for nu (from metric)
 //static double (*y_f);						   		//Initialize global array to save solutions for f = 1-w/Omega
 //static double (*y_i);						   		//Initialize global array to save solutions for f = 1-w/Omega
 static int iter;
 static double *Ppts;							
-double *gamma0_param, *acoef_param;					
-double *y_m, *initRho, *rr;		
+static double *gamma0_param, *acoef_param;					
+static double *y_m, *rr;		
 
 
-extern void tov(double Ppts_in[], double *rr_in, double *y_m_in, double *gamma0_param_in)
+extern void tov(double Ppts_in[], double *rr_in, double *y_m_in, double *gamma0_param_in, double *acoef_param_in)
 /* Main driver function to get M and  R (moment of inertia disabled)
    by solving the TOV equations (+ ODEs for I)
 */
 {
-
-	//double *initEpsilon, *initM;
-	//double Pedge, r_start;	
 	int i,j,k, EoSindex, index;	
 
-	Ppts = dvector(1,nparam+1);				
-	acoef_param = dvector(1,nparam);	
+	Ppts = dvector(1,nparam);				
 	gamma0_param = gamma0_param_in;			//Set the global pointer for gamma0_param to the location of gamma0 from the main() func in inversion	
+	acoef_param = acoef_param_in;
 	rr = rr_in;
 	y_m = y_m_in;
-	//initRho = initRho_in;						
-
-	for (i=1; i<= nEpsilon; i++)
+	
+	for (i=1; i<= nparam; i++)
 		Ppts[i] = Ppts_in[i];													
 	
-	getGammaA();								//Find Gamma and a_coef along each segment, given Ppts
+	getGammaA(Ppts, gamma0_param,acoef_param);	//Find Gamma and a_coef along each segment, given Ppts
 
+	rkdriver(r_start, Pedge);			//Call Runge-Kutta integrating function
 
-	rkdriver(initEpsilon, initRho, initM, r_start, Pedge);			//Call Runge-Kutta integrating function
 
 	//for (j=1;j<=nEpsilon;j++)  inertia[j] = scaleI(j);			//Scale the trial moment of inertia, as in Kalogera & Psaltis 99
 
-	free_dvector(Ppts, 1, nparam+1);
-	free_dvector(gamma0_param, 1, nparam);
-	free_dvector(acoef_param, 1, nparam);
+	free_dvector(Ppts, 1, nparam);
+	//free_dvector(gamma0_param, 1, nparam);
+	//free_dvector(acoef_param, 1, nparam);
 	//free_dvector(initEpsilon, 1, nEpsilon);
 	//free_dvector(initM, 1, nEpsilon);
 	//free_dvector(y_i,1,nEpsilon);
@@ -67,7 +61,7 @@ extern void tov(double Ppts_in[], double *rr_in, double *y_m_in, double *gamma0_
 
 }
 
-void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1, double p_edge)
+void rkdriver(double r1, double p_edge)
 /* Fourth-order Range-Kutta driver.
  Starting from initial values vstart[1..nrho] known at r1, use fourth-order RK to advance
  by increments calculated depending on the local environment. Continue advancing until the
@@ -115,7 +109,6 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 		v[5]=0.0;						//Initial cassi = df/dr = 0 (at center)
 		v[6]=0.0;						//Load initial mom of I
 		*/
-
 		k=1;	
 		while (k <= nstep && v[2] >= p_edge*centralP[i])		//Keep stepping until P_edge (v_p) is negligible or exceed nstep	
 		{
@@ -125,9 +118,7 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 			hthisstep = min(fabs(h_Pstep), fabs(h_Mstep))*hscale;
 
 			for (j=1;j<=nODEs;j++) dv[j]=derivs(j,r,v);      //,v[3],v[4],v[5]); 	//Get initial derivs for all 6 funcs
-
 			rk4(v_eps, v, dv, r, hthisstep, vout, &vout_eps);
-
 			r=r+hthisstep;	    					//Increase the radius increment		
 
 		   	v_eps=vout_eps;	    					//Save updated terms
@@ -138,7 +129,6 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 			v[5]=vout[5];	    					//cassi		
 			v[6]=vout[6];*/						//I_trial
 			k+=1;							//Increase the stepper
-
 			if (k-1==nstep && v[2] >= p_edge*centralP[i])		//Verify that we've actually reached edge w/in nsteps
 				printf("Failed to reach edge for rho_c: %d\n",i);	//Print warning if fail to reach edge
 		}
@@ -148,7 +138,6 @@ void rkdriver(double initEpsilon[], double initRho[], double initM[], double r1,
 		//y_f[i] = v[4];							//f_trial
 		//y_i[i] = v[6];							//and I_trial
 		//if (index==1) iter=k;
-
 	  //}
 	}
 
@@ -167,13 +156,12 @@ void rk4(double y_eps, double y[], double dydr[], double r, double h,
  The user supplies the routine derivs(x,y,dyxy) which returns the derivatives dydx
  at x.
 */
-{	
+{
 	int j;
    	double rh, hh, h6;
 	double yt_eps;	
 	double *dym, *dyt;						//Order ALWAYS: M, P, v, f, cassi, I
 	double *yt;
-
 	dym=dvector(1,nODEs);
 	dyt=dvector(1,nODEs);
 	yt=dvector(1,nODEs);
@@ -200,10 +188,9 @@ void rk4(double y_eps, double y[], double dydr[], double r, double h,
 	free_dvector(dym,1,nODEs);
 	free_dvector(dyt,1,nODEs);
 	free_dvector(yt,1,nODEs);
-
 }
 
-extern double EOSpressure(double massdensity, int useparam)
+extern double EOSpressure(double massdensity, double Ppts[], double gamma0_param[], int useparam)
 /* Find the EoS pressure given a density, by searching through the tabulated
  values of pressure and density. Use bisection method to search.	
 */
@@ -256,7 +243,6 @@ double EOSdensity(double pressure, int useparam)
 */
 {
 	double massdensity, energydensity;
-
 	int xmid,index;							//Index at midpoint
 	int j, a=1,b=numlinesSLY;						//Interval bounds
 	double m,intercept;						//Slope and int for linear interpolation
@@ -305,7 +291,7 @@ double EOSdensity(double pressure, int useparam)
 		if (massdensity <= rhopts[1])
 			energydensity = findEps0_inSLY(massdensity);		//if lower than rhopts[1], search in SLy for epsilon
 		else
-			energydensity = param_massToEnergy(massdensity);	//Convert mass to energy density
+			energydensity = param_massToEnergy(massdensity,Ppts,gamma0_param,acoef_param);	//Convert mass to energy density
 	}
 
 
@@ -320,6 +306,8 @@ double derivs(int j, double r, double array[])
 {
 
 	double mass, pressure, nu, f, cassi;
+	double density;
+	
 	mass = array[1];
 	pressure = array[2];
 	if (nODEs > 2)
@@ -328,8 +316,6 @@ double derivs(int j, double r, double array[])
 		f = array[4];
 		cassi = array[5];
 	}
-
-	double density;
 
 	if (pressure <= Ppts[1])				 	//Find the energy density for the given pressure
  		density=EOSdensity(pressure,0); 			//Using SLy if low-density
@@ -394,7 +380,7 @@ double derivs(int j, double r, double array[])
 
 }*/
 
-extern double param_massToEnergy(double massdensity)
+extern double param_massToEnergy(double massdensity, double Ppts[], double gamma0_param[], double acoef_param[])
 /* Given a mass density, return an energy density, using only the parametrization points
    and the corresponding a's, gamma's, etc. for the parametrization (i.e. do not invoke
    the full EoS).
@@ -453,7 +439,7 @@ extern double findEps0_inSLY(double rho0)
 }
 
 
-void getGammaA()
+extern void getGammaA(double Ppts[], double *gamma0_param, double *acoef_param)
 /*
   Calculate the gamma and coefficient a (the integration constant in eps(rho) )
   along each segment of the ~polytropic~ EoS
@@ -486,11 +472,11 @@ void getGammaA()
 		{
 			if ( fabs(gamma0_param[j]-1.0) < 0.01)					//if gamma=1, use special case of eps-rho relation
 			{
-				acoef_param[j] =  ( param_massToEnergy(rhopts[j]) / rhopts[j] ) - 1.0 - 
+				acoef_param[j] =  ( param_massToEnergy(rhopts[j],Ppts,gamma0_param,acoef_param) / rhopts[j] ) - 1.0 - 
 						Ppts[j]*log(rhopts[j]) / rhopts[j] ; 
 			} else									//otherwise, define 'a' as in OP09
 			{
-				acoef_param[j] =  ( param_massToEnergy(rhopts[j]) / rhopts[j] ) - 1.0 - 
+				acoef_param[j] =  ( param_massToEnergy(rhopts[j],Ppts,gamma0_param,acoef_param) / rhopts[j] ) - 1.0 - 
 						Ppts[j] / (rhopts[j]*(gamma0_param[j]-1.0) );
 			}
 		}	
