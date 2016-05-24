@@ -58,6 +58,29 @@ extern double max_array(double array[], int num_elements)
 }
 
 extern int bisection(double x, double x_array[],int numlines)
+/* Use bisection method to search for the closest value to "x" 
+   in the array "x_array".
+*/
+{
+	int xmid;							//Index at midpoint
+	int a=1,b=numlines, lower_index;				//Index bounds for whole interval
+	do
+	{
+		xmid=(a+b)/2;
+		if (x < x_array[xmid])
+			b = xmid;
+		else
+			a = xmid;
+	} 
+	while (fabs(b-a) > 1);	
+
+	lower_index = min(a,b);
+
+	return lower_index;
+
+}
+
+extern int bisect_linint(double x, double x_array[],double y_array[], int numlines)
 /* Use bisection method to search for the value corresponding to "x" 
    in the array "y_array".
 */
@@ -76,9 +99,9 @@ extern int bisection(double x, double x_array[],int numlines)
 	} 
 	while (fabs(b-a) > 1);	
 
-	lower_index = min(a,b);
-
-	return lower_index;
-
+	m= (y_array[b] - y_array[a]) / (x_array[b] - x_array[a]);		//Calculate slope to linearly interpolate btwn a and b
+	intercept = y_array[a] - m*x_array[a];				//Calculate y-intercept
+	y = m*x + intercept;
+	return y;
 }
 
