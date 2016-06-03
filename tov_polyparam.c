@@ -8,7 +8,7 @@
 
 */
 
-#include "header.h"
+#include "tov.h"
 
 //static double findnu(int j);							//Prototype func to calculate nu, given an initial guess ~1
 //static double scaleI(int j);							//Prototype func to scale I_trial
@@ -219,6 +219,7 @@ extern double EOSpressure(double massdensity, double Ppts[], double gamma0_param
 		if ( pressure > p_SLY[numlinesSLY] || pressure < p_SLY[1] )	//check results of bisection search
 		{
 			printf("Warning: bisection method found P %e at edge of range %d %d \n",pressure*p_char,a,b);
+			fflush(stdout);
 		}
 	}
 	else									//Otherwise use the parametrized EoS
@@ -270,7 +271,8 @@ double EOSdensity(double pressure, int useparam)
 		{	printf("Warning: bisection method found Rho at edge of range %d %d \n", a, b);
 			printf("pressure: %e\n", pressure*p_char);
 			printf("massdensity: %e \n",massdensity*rho_char);
-			exit(0);
+			fflush(stdout);
+			//exit(0);
 		}
 
 		energydensity = findEps0_inSLY(massdensity);			//search in SLy for epsilon

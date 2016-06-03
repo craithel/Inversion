@@ -7,12 +7,13 @@
 
 */
 
-#include "header.h"
+#include "tov.h"
 
 extern void initConditions(double *initM, double *initRho, double *initEpsilon, double *centralP, double *Ppts, double *gamma0_param, double *acoef_param)
 {
 
 	int i,j;
+
 	getGammaA(Ppts, gamma0_param, acoef_param);	       //Get gamma and 'a' coefs for this set of Ppts
 	initRho[1] = 1.0*eps_min;
 	for (i=2;i<=nEpsilon;i++) initRho[i] = initRho[i-1]*1.07;	//Scale starting mass density values
@@ -30,7 +31,6 @@ extern void initConditions(double *initM, double *initRho, double *initEpsilon, 
 		}
 		initM[j] = r_start*r_start*r_start*initEpsilon[j];		//Initial masses enclosed by r_start
 	}
-
 }
 
 
