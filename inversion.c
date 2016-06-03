@@ -9,15 +9,16 @@ gcc inversion.c ../nrutil.c mtwist-1.5/mtwist.c useful_funcs.c tov_polyparam.c m
 
 */
 
-#include "header.h"
+#include "tov.h"
+#include "mockMR.h"
 #include "mtwist-1.5/mtwist.h"
 #include "mpi.h"
-//#include "mpe.h"
+#include "initP.h"
 
-#define nMC 14000							//Total number of desired MC steps; to be split among N parallel processes
+#define nMC 7400000							//Total number of desired MC steps; to be split among N parallel processes
 #define nBurn 0								//Number of accepted steps to ignore
 #define sigma_q 7e-6							//Step size (steps drawn from a gaussian distro with mean 0 and sigma_q)
-#define nrand 3								//Number of random numbers to be used in each loop of each process
+#define nrand 7								//Number of random numbers to be used in each loop of each process
 #define REQUEST 1
 #define REPLY 2
 
@@ -26,14 +27,14 @@ double *p_SLY, *epsilon_SLY, *rho_SLY;					// Re-initialize GLOBAL variables def
 double *m_data, *r_data, *m_sigma, *r_sigma;				//							 //
 double *initM, *initRho, *initEpsilon, *centralP;			//							 //
 double r_start, Pedge;							//							 //
-double p_ns;								//							 //
 int numlinesSLY;							//-------------------------------------------------------//
-							
+double p_ns;						
+
 double integrateRhoC(double unMarg_L[]);
 double prior_P(int j,  double Ppts_local[], double gamma0_param[], double acoef_param[], double maxM);
 double getPosterior(double Ppts_local[], double gamma0_param[],double acoef_param[], double mm[], 
 		    double m_data[], double m_sigma[], double rr[], double r_data[], double r_sigma[]);
-double gaussian(double mean, double sigma, double rand1, double rand2);
+void gaussian(double *steps, double mean, double sigma1, double sigma2, double sigma3, double sigma4, double sigma5, double *rands);
 void revertP(double Ppts_new[], double Ppts_old[]);
 double getCausalGamma(int j, double Ppts_local[], double gamma0_param[], double acoef_param[]);
 
@@ -48,11 +49,14 @@ int main( int argc, char *argv[])
 	double ratio, scriptP,step;
 	double *Ppts_old, *Ppts_new;
 	double *mm, *rr, *gamma0_param, *acoef_param;
-	double *test;
+	double *test, *steps;
+	double mean_P1, mean_P2, mean_P3, mean_P4, mean_P5;	
+	double sigma_P1, sigma_P2, sigma_P3, sigma_P4, sigma_P5;
 	
 	int ranks[1], numprocs, myid, server, workerid;
 	int request;
-	double rands[nrand];
+	double rands[nrand+1];
+		
 	MPI_Comm world, workers;
 	MPI_Group world_group, worker_group;
 	MPI_Status status;
@@ -63,6 +67,9 @@ int main( int argc, char *argv[])
 	MPI_Comm_rank(world, &myid);
 	server = numprocs-1;				 			//last proc is server for random numbers
 	
+	p_SLY = dvector(1, lines);			 	
+	epsilon_SLY = dvector(1, lines);			
+	rho_SLY = dvector(1, lines);				
 	m_data = dvector(1,nData+1);				
 	r_data = dvector(1,nData+1);				
 	m_sigma = dvector(1,nData+1);				
@@ -76,11 +83,11 @@ int main( int argc, char *argv[])
 	MPI_Bcast(r_data, nData+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 	MPI_Bcast(m_sigma, nData+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 	MPI_Bcast(r_sigma, nData+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-	MPI_Bcast(p_SLY, numlinesSLY, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-	MPI_Bcast(epsilon_SLY, numlinesSLY, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-	MPI_Bcast(rho_SLY, numlinesSLY, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(p_SLY, lines, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(epsilon_SLY, lines, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(rho_SLY, lines, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 	MPI_Bcast(&numlinesSLY, 1, MPI_INT, 0, MPI_COMM_WORLD);
-	
+
 	MPI_Comm_group(world, &world_group);						
 	ranks[0] = server;							//Create a rand server by excluding one communicator
 	MPI_Group_excl(world_group, 1, ranks, &worker_group);			// from the "world" group. The rand server supplies random nums
@@ -95,7 +102,7 @@ int main( int argc, char *argv[])
 			if (request)
 			{
 				for (i=1;i<=nrand;i++) rands[i] = mt_drand(); 
-				MPI_Send(rands, nrand, MPI_DOUBLE, status.MPI_SOURCE, REPLY, world);
+				MPI_Send(rands, nrand+1, MPI_DOUBLE, status.MPI_SOURCE, REPLY, world);
 			}
 
 		}
@@ -104,13 +111,10 @@ int main( int argc, char *argv[])
 	else									// Worker process
 	{
 		request = 1;
-		MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);		//Send request for random numbers
+
 		MPI_Comm_rank(workers, &workerid);				//Determine rank
 
 		rhopts = dvector(1,nparam);				// Allocate memory for GLOBAL variables in header file   //
-		p_SLY = dvector(1, lines);			 	//							 //
-		epsilon_SLY = dvector(1, lines);			//							 //
-		rho_SLY = dvector(1, lines);				//							 //
 		initEpsilon=dvector(1,nEpsilon);			//							 //	
 		initM=dvector(1,nEpsilon);				//							 //							
 		initRho = dvector(1, nEpsilon);				//							 //	
@@ -118,23 +122,62 @@ int main( int argc, char *argv[])
 
 		Ppts_old = dvector(1, nparam);
 		Ppts_new = dvector(1, nparam);
+		steps = dvector(1, nparam);
 		gamma0_param = dvector(1,nparam-1);
 		acoef_param = dvector(1,nparam-1);
 		mm = dvector(1, nEpsilon);
 		rr = dvector(1, nEpsilon);							
 
-		getRhoPts(rhopts);								//Get the fiducial densities
-		test = dvector(1,7);	
-		test[1]=1.;			//P_ns is fixed and should not be varied
-		test[2]=0.9995;
-		test[3]=0.999;
-		test[4]=1.0005;
-		test[5]=1.0018;
-		test[6]=0.9984;
-		for (i=1; i<=nparam; i++) 
-			Ppts_new[i] = bisect_linint(rhopts[i], rho_SLY, p_SLY, numlinesSLY)*test[i];	//Starting Ppts = dithered from SLy values
-
 		p_ns = bisect_linint(rho_ns, rho_SLY, p_SLY, numlinesSLY);				//Pressure at rho_saturation according to SLy 
+		getRhoPts(rhopts);								//Get the fiducial densities
+		//test = dvector(1,7);	
+
+		if (myid==0)
+		{
+			initP(&mean_P1, &sigma_P1, &mean_P2, &sigma_P2, &mean_P3, &sigma_P3, &mean_P4, &sigma_P4, &mean_P5, &sigma_P5); 
+			exit(0);
+		}
+
+		int test_prior = 0;
+		while (test_prior == 0)
+		{
+			MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);		//Send request for random numbers
+			MPI_Recv(rands, nrand+1, MPI_DOUBLE, server, REPLY, world, &status); //Receive 7 random numbers
+
+			/*test[1]=1.;			//P_ns is fixed and should not be varied
+			test[2]=rands[1]*3.;
+			test[3]=rands[2]*3.;
+			test[4]=rands[3]*3.;
+			test[5]=rands[4]*3.;
+			test[6]=rands[5]*3.;
+			for (i=1; i<=nparam; i++) 
+				Ppts_new[i] = bisect_linint(rhopts[i], rho_SLY, p_SLY, numlinesSLY)*test[i];	//Starting Ppts = dithered from SLy values
+			*/
+
+			Ppts_new[1] = p_ns;
+			Ppts_new[2] = mean_P1*(rands[1]*3.);
+			Ppts_new[3] = mean_P1*(rands[2]*3.);
+			Ppts_new[4] = mean_P1*(rands[3]*3.);
+			Ppts_new[5] = mean_P1*(rands[4]*3.);
+			Ppts_new[6] = mean_P1*(rands[5]*3.);
+
+			getGammaA(Ppts_new, gamma0_param, acoef_param);
+
+			test_prior=1;
+			if (Ppts_new[2] < p_ns || Ppts_new[3] < 2.85e-5)	// Prior on P1 and P2:  P1 >= P_sat(sly), P2 >= 7.56MeV/fm^3
+				test_prior = 0;			
+			else
+			{
+				for (j=2; j<=nparam; j++)
+				{
+					if (Ppts_new[j] < Ppts_new[j-1] || gamma0_param[j-1] > getCausalGamma(j, Ppts_new,gamma0_param,acoef_param) )  		
+					{
+						test_prior=0;
+						continue;
+					}
+				}
+			}
+		}
 
 		edgeConditions(&r_start, &Pedge);
 		initConditions(initM, initRho, initEpsilon, centralP, Ppts_new, gamma0_param, acoef_param);
@@ -143,55 +186,66 @@ int main( int argc, char *argv[])
 		sprintf(filename,"chain_output/inversion_output_%d.txt",myid);
 		FILE *f = fopen(filename,"w");
 		fprintf(f,"File created by inversion.c, assuming a 5-polytrope parametrized EoS throughout the star (P0 = P_sat) \n");
+		fprintf(f,"Starting pressures from histogram of 42 EoS and dithered by: %f %f %f %f %f\n", rands[1]*3., rands[2]*3., rands[3]*3., rands[4]*3., rands[5]*3.);
 		fprintf(f,"N_MC and Acceptance rate details in footer. \n");
 		fprintf(f,"Posterior      P_1         P_2          P_3         P_4          P_5 \n");
+		fflush(f);
 
 		tov(Ppts_new, rr, mm, gamma0_param, acoef_param);			  //Get mass, radius, and update gamma and 'a' coefs for first set of Ppts
 		posterior_old = getPosterior(Ppts_new,gamma0_param,acoef_param,		  //Get posterior likelihood for original set of Ppts
  					     mm, m_data, m_sigma,rr, r_data, r_sigma);
+
+		MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);		//Send request for random numbers
+
 		i=1;
 		nMC_thisrank = nMC/(numprocs-1);
 		while (i <= nMC_thisrank)						   //Loop through all MC points
 		{
-			MPI_Recv(rands, nrand, MPI_DOUBLE, server, REPLY, world, &status); //Receive 3 random numbers for this loop iteration
+			MPI_Recv(rands, nrand+1, MPI_DOUBLE, server, REPLY, world, &status); //Receive 3 random numbers for this loop iteration
 
 			if (i != 1 && laststep_rejected == 0)				   //If we moved to a new step (rejected=0), use that posterior as the starting posterior
 				posterior_old = posterior_new;				   // (otherwise, posterior_old is still posterior_old, so we don't have to update it)
 
 
 			toContinue=0;
+			gaussian(steps, 0.,sigma_P1, sigma_P2, sigma_P3, sigma_P4_sigma_P5, rands);
 			for (j=2; j<=nparam; j++)					//Note: P0 is fixed, so we don't take steps in it
 			{
 				Ppts_old[j] = Ppts_new[j];				   //Save old Ppts to a temporary array
-				step =  gaussian(0.,sigma_q, rands[1], rands[2]);
-				Ppts_new[j] += step;				      	   //Get new set of Ppts, one Gaussian step away from old
-				if (Ppts_new[j] < 0.)
+				Ppts_new[j] += steps[j-1];			      	   //Get new set of Ppts, one Gaussian step away from old
+				if (Ppts_new[j] < p_ns)
 					toContinue=1;
 			}
 
 
 			if (toContinue==1)
 			{
+				attempted++;
 				posterior_new = 0.;					   //If any Ppt < 0, the prior will be 0 so reject and move on
 				laststep_rejected = 1;
 				revertP(Ppts_new, Ppts_old);
+				MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);
 				continue;
 			}
+
+
 
 			tov(Ppts_new,rr, mm, gamma0_param,acoef_param);			   //Get M,R and update gamma and a_coef for NEW set of Ppts
 			posterior_new = getPosterior(Ppts_new, gamma0_param,acoef_param,   //Get posterior likelihood for NEW set of Ppts
 						    mm, m_data, m_sigma,rr, r_data, r_sigma);
 
 			ratio = posterior_new / posterior_old;
-			scriptP = rands[3];						   //MT pseudorandom double in [0,1) with 32 bits of randomness 
+			scriptP = rands[7];						   //MT pseudorandom double in [0,1) with 32 bits of randomness 
+			
 			if (scriptP < ratio)						   //If new P points are accepted
 			{
 				laststep_rejected = 0;
-				if (i > nBurn)						   //Save PPts if we're past the burn-in period
-				{
-					fprintf(f, "%e  %6.4e  %6.4e  %6.4e  %6.4e   %6.4e \n",posterior_new, Ppts_new[2]*p_char, Ppts_new[3]*p_char,Ppts_new[4]*p_char,Ppts_new[5]*p_char,Ppts_new[6]*p_char);
-					accepted++;
-				}
+				//if (i > nBurn)						   //Save PPts if we're past the burn-in period
+				//{
+				fprintf(f, "%e  %6.4e  %6.4e  %6.4e  %6.4e   %6.4e \n",posterior_new, Ppts_new[2]*p_char, Ppts_new[3]*p_char,Ppts_new[4]*p_char,Ppts_new[5]*p_char,Ppts_new[6]*p_char);
+				fflush(f);
+				accepted++;
+				//}
 				i++;							 
 			}
 			else
@@ -219,9 +273,10 @@ int main( int argc, char *argv[])
 		fprintf(f,"Total steps attempted after BurnIN: %d  Number accepted after BurnIn: %d \n", attempted-nBurn, accepted);
 		fclose(f);	
 
-		free_dvector(test,1,7);
+		//free_dvector(test,1,7);
 		free_dvector(Ppts_old,1,nparam);
 		free_dvector(Ppts_new,1,nparam);
+		free_dvector(steps,1,nparam);
 		free_dvector(rhopts,1,nparam);
 		free_dvector(rho_SLY, 1, lines);
 		free_dvector(epsilon_SLY, 1, lines);
@@ -278,7 +333,7 @@ double getPosterior(double Ppts_local[],  double gamma0_param[], double acoef_pa
 
 	maxM = max_array(mm,nEpsilon);				//the maximum mass achieved for this set of P1, ..., P5
 	posterior = likelihood;
-	if (Ppts_local[2] < p_ns || Ppts_local[3] > 2.85e-5)	// Prior on P1 and P2:  P1 >= P_sat(sly), P2 <= 7.56MeV/fm^3
+	if (Ppts_local[2] < p_ns || Ppts_local[3] < 2.85e-5)	// Prior on P1 and P2:  P1 >= P_sat(sly), P2 >= 7.56MeV/fm^3
 		posterior = 0.;					
 	else
 	{
@@ -310,9 +365,8 @@ double prior_P(int j, double Ppts_local[], double gamma0_param[], double acoef_p
 	//	prior=0.;
 
 	/*  Priors: P_i > P_(i-1), the gamma leading up to P_i must not be acausal, M_max >= 1.97 */
-	if (j > 1 && (Ppts_local[j] < Ppts_local[j-1] || gamma0_param[j-1] > getCausalGamma(j, Ppts_local,gamma0_param,acoef_param) || maxM < 1.97)  		
+	if (Ppts_local[j] < Ppts_local[j-1] || gamma0_param[j-1] > getCausalGamma(j, Ppts_local,gamma0_param,acoef_param) || maxM < 1.97)  		
 		prior=0.;
-
 	return prior;
 }
 
@@ -372,15 +426,16 @@ double getCausalGamma(int j, double Ppts_local[], double gamma0_param[], double 
 }
 
 
-double gaussian(double mean, double sigma, double rand1, double rand2)
+void gaussian(double *steps, double mean, double sigma1, double sigma2, double sigma3, double sigma4, double sigma5, double *rands)
 /* Draw a random number from a Gaussian distribution */
 {
-	double x1, x2, y1, y2;
-	x1 = rand1;					//Mersenne Twister pseudorandom double in [0,1) with 32 bits of randomness 
-	x2 = rand2;					
-	y1 = sqrt(-2.*log(x1))*cos(2.*M_PI*x2);
-	y2 = sqrt(-2.*log(x1))*sin(2.*M_PI*x2);
+	steps[1] = sqrt(-2.*log(rands[1]))*cos(2.*M_PI*rands[2])*sigma1 + mean;
+	steps[2] = sqrt(-2.*log(rands[1]))*sin(2.*M_PI*rands[2])*sigma2 + mean;
 
-	return y1*sigma + mean;
+	steps[3] = sqrt(-2.*log(rands[3]))*cos(2.*M_PI*rands[4])*sigma3 + mean;
+	steps[4] = sqrt(-2.*log(rands[3]))*sin(2.*M_PI*rands[4])*sigma4 + mean;
+
+	steps[5] = sqrt(-2.*log(rands[5]))*cos(2.*M_PI*rands[6])*sigma5 + mean;
+
 }
 
