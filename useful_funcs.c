@@ -57,6 +57,98 @@ extern double max_array(double array[], int num_elements)
    return max;
 }
 
+extern int min_array_index(double array[], int num_elements)
+/* Return the index of the smallest element in array */
+{
+   int i, index;
+   double min=32000.;
+   for (i=1; i<=num_elements; i++)
+   {
+	 if (array[i] < min)
+	 {
+	    min = array[i];
+	    index = i;
+	 }
+   }
+   return index;
+}
+
+
+extern int max_array_index(double array[], int num_elements)
+/* Return the index of the largest element in array */
+{
+   int i, index;
+   double max=-32000.;
+   for (i=1; i<=num_elements; i++)
+   {
+	 if (array[i]>max)
+	 {
+	    max=array[i];
+	    index = i;
+	 }
+   }
+   return index;
+}
+extern int min_iarray(int array[], int num_elements)
+/* Return the smallest element in an INT array */
+{
+   int i;
+   int min=32000;
+   for (i=1; i<=num_elements; i++)
+   {
+	 if (array[i] < min)
+	    min = array[i];
+	 
+   }
+   return min;
+}
+
+
+extern int max_iarray(int array[], int num_elements)
+/* Return the largest element in an INT array */
+{
+   int i;
+   int max=-32000;
+   for (i=1; i<=num_elements; i++)
+   {
+	 if (array[i]>max)
+	    max=array[i];
+   }
+   return max;
+}
+
+extern int min_iarray_index(int array[], int num_elements)
+/* Return the smallest element in array */
+{
+   int i, index;
+   int min=32000;
+   for (i=1; i<=num_elements; i++)
+   {
+	 if (array[i] < min)
+	 {
+	    min = array[i];
+	    index = i;
+	 }
+   }
+   return index;
+}
+
+
+extern int max_iarray_index(int array[], int num_elements)
+/* Return the largest element in array */
+{
+   int i, index;
+   int max=-32000;
+   for (i=1; i<=num_elements; i++)
+   {
+	 if (array[i]>max)
+	 {
+	    max=array[i];
+	    index = i;
+	 }
+   }
+   return index;
+}
 extern int bisection(double x, double x_array[],int numlines)
 /* Use bisection method to search for the closest value to "x" 
    in the array "x_array".
@@ -80,7 +172,7 @@ extern int bisection(double x, double x_array[],int numlines)
 
 }
 
-extern int bisect_linint(double x, double x_array[],double y_array[], int numlines)
+extern double bisect_linint(double x, double x_array[],double y_array[], int numlines)
 /* Use bisection method to search for the value corresponding to "x" 
    in the array "y_array".
 */
@@ -99,9 +191,15 @@ extern int bisect_linint(double x, double x_array[],double y_array[], int numlin
 	} 
 	while (fabs(b-a) > 1);	
 
-	m= (y_array[b] - y_array[a]) / (x_array[b] - x_array[a]);		//Calculate slope to linearly interpolate btwn a and b
-	intercept = y_array[a] - m*x_array[a];				//Calculate y-intercept
-	y = m*x + intercept;
+	if (x_array[a] != x_array[b])
+	{
+		m= (y_array[b] - y_array[a]) / (x_array[b] - x_array[a]);		//Calculate slope to linearly interpolate btwn a and b
+		intercept = y_array[a] - m*x_array[a];				//Calculate y-intercept
+		y = m*x + intercept;
+	}
+	else
+		y = (y_array[a] + y_array[b])/2.;
+
 	return y;
 }
 
