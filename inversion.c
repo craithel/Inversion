@@ -229,6 +229,7 @@ int main( int argc, char *argv[])
 			}
 
 
+			initConditions(initM, initRho, initEpsilon, centralP, Ppts_new, gamma0_param, acoef_param); //Get new init values for new set of Ppts
 
 			tov(Ppts_new,rr, mm, gamma0_param,acoef_param);			   //Get M,R and update gamma and a_coef for NEW set of Ppts
 			posterior_new = getPosterior(Ppts_new, gamma0_param,acoef_param,   //Get posterior likelihood for NEW set of Ppts
