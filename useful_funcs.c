@@ -7,7 +7,7 @@
 
 #include "header_useful.h"
 
-extern double min(double x1, double x2)
+extern double mymin(double x1, double x2)
 /* Return the smaller value of x1, x2 */
 {
 	if (x1 < x2)
@@ -16,7 +16,7 @@ extern double min(double x1, double x2)
 		return x2;
 }
 
-extern double max(double x1, double x2)
+extern double mymax(double x1, double x2)
 /* Return the larger value of x1, x2 */
 {
 	if (x1 > x2)
@@ -166,7 +166,7 @@ extern int bisection(double x, double x_array[],int numlines)
 	} 
 	while (fabs(b-a) > 1);	
 
-	lower_index = min(a,b);
+	lower_index = mymin(a,b);
 
 	return lower_index;
 
