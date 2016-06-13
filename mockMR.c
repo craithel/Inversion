@@ -5,7 +5,8 @@
 
 */
 
-#include "header.h"
+//#include "header.h"
+#include "mockMR.h"
 #include "mtwist-1.5/mtwist.h"
 
 static double *mass, *radius;
