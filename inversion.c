@@ -14,8 +14,9 @@ gcc inversion.c ../nrutil.c mtwist-1.5/mtwist.c useful_funcs.c tov_polyparam.c m
 #include "mtwist-1.5/mtwist.h"
 #include "mpi.h"
 #include "initP.h"
+#include <time.h>
 
-#define nMC 7400000							//Total number of desired MC steps; to be split among N parallel processes
+#define nMC 9472000							//Total number of desired MC steps; to be split among N parallel processes
 #define nBurn 0								//Number of accepted steps to ignore
 #define sigma_q 7e-6							//Step size (steps drawn from a gaussian distro with mean 0 and sigma_q)
 #define nrand 7								//Number of random numbers to be used in each loop of each process
@@ -128,15 +129,30 @@ int main( int argc, char *argv[])
 		mm = dvector(1, nEpsilon);
 		rr = dvector(1, nEpsilon);							
 
-		p_ns = bisect_linint(rho_ns, rho_SLY, p_SLY, numlinesSLY);				//Pressure at rho_saturation according to SLy 
+		p_ns = bisect_linint(rho_ns, rho_sly, p_sly, numlinessly);				//pressure at rho_saturation according to sly 
 		getRhoPts(rhopts);								//Get the fiducial densities
 		//test = dvector(1,7);	
 
 		if (myid==0)
 		{
 			initP(&mean_P1, &sigma_P1, &mean_P2, &sigma_P2, &mean_P3, &sigma_P3, &mean_P4, &sigma_P4, &mean_P5, &sigma_P5); 
-			exit(0);
+			sigma_P1 /= 30.;
+			sigma_P2 /= 30.;
+			sigma_P3 /= 30.;
+			sigma_P4 /= 30.;
+			sigma_P5 /= 30.;
 		}
+
+		MPI_Bcast(&mean_P1, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&mean_P2, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&mean_P3, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&mean_P4, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&mean_P5, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&sigma_P1, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&sigma_P2, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&sigma_P3, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&sigma_P4, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+		MPI_Bcast(&sigma_P5, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
 		int test_prior = 0;
 		while (test_prior == 0)
@@ -156,10 +172,10 @@ int main( int argc, char *argv[])
 
 			Ppts_new[1] = p_ns;
 			Ppts_new[2] = mean_P1*(rands[1]*3.);
-			Ppts_new[3] = mean_P1*(rands[2]*3.);
-			Ppts_new[4] = mean_P1*(rands[3]*3.);
-			Ppts_new[5] = mean_P1*(rands[4]*3.);
-			Ppts_new[6] = mean_P1*(rands[5]*3.);
+			Ppts_new[3] = mean_P2*(rands[2]*3.);
+			Ppts_new[4] = mean_P3*(rands[3]*3.);
+			Ppts_new[5] = mean_P4*(rands[4]*3.);
+			Ppts_new[6] = mean_P5*(rands[5]*3.);
 
 			getGammaA(Ppts_new, gamma0_param, acoef_param);
 
@@ -190,7 +206,7 @@ int main( int argc, char *argv[])
 		fprintf(f,"N_MC and Acceptance rate details in footer. \n");
 		fprintf(f,"Posterior      P_1         P_2          P_3         P_4          P_5 \n");
 		fflush(f);
-
+		
 		tov(Ppts_new, rr, mm, gamma0_param, acoef_param);			  //Get mass, radius, and update gamma and 'a' coefs for first set of Ppts
 		posterior_old = getPosterior(Ppts_new,gamma0_param,acoef_param,		  //Get posterior likelihood for original set of Ppts
  					     mm, m_data, m_sigma,rr, r_data, r_sigma);
@@ -208,7 +224,7 @@ int main( int argc, char *argv[])
 
 
 			toContinue=0;
-			gaussian(steps, 0.,sigma_P1, sigma_P2, sigma_P3, sigma_P4_sigma_P5, rands);
+			gaussian(steps, 0.,sigma_P1, sigma_P2, sigma_P3, sigma_P4, sigma_P5, rands);
 			for (j=2; j<=nparam; j++)					//Note: P0 is fixed, so we don't take steps in it
 			{
 				Ppts_old[j] = Ppts_new[j];				   //Save old Ppts to a temporary array
@@ -230,7 +246,7 @@ int main( int argc, char *argv[])
 
 
 			initConditions(initM, initRho, initEpsilon, centralP, Ppts_new, gamma0_param, acoef_param); //Get new init values for new set of Ppts
-
+			
 			tov(Ppts_new,rr, mm, gamma0_param,acoef_param);			   //Get M,R and update gamma and a_coef for NEW set of Ppts
 			posterior_new = getPosterior(Ppts_new, gamma0_param,acoef_param,   //Get posterior likelihood for NEW set of Ppts
 						    mm, m_data, m_sigma,rr, r_data, r_sigma);
