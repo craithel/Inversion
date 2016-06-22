@@ -16,6 +16,7 @@
 #include "../nrutil.h"
 #include "header_useful.h"
 #include "tov_dev.h"
+#include "bestPMR.h"
 
 #define nFiles 369
 #define nMCperfile 25600
@@ -26,7 +27,9 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 {
    if (code != cudaSuccess) 
    {
-      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      FILE *ferr = fopen("gpu.err","w");
+      fprintf(ferr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      fclose(ferr);
       if (abort) exit(code);
    }
 }
@@ -54,27 +57,20 @@ __constant__ double rhopts[nparam+1];
 __constant__ double p_SLY[lines+1], epsilon_SLY[lines+1], rho_SLY[lines+1];
 //__constant__ double *P1, *P2, *P3, *P4, *P5;	
 
-__host__ int main()
+extern "C"
+int kernel_driver(int myid, int n1overE, double *P1_1overE, double *P2_1overE, double *P3_1overE, double *P4_1overE, double *P5_1overE, double *rho_SLY_host, double *p_SLY_host, double *eps_SLY_host, int nSLY_host)
 {
 
-	int i,j, k, nSLY_host;
-	double *post_host, *P1_host, *P2_host, *P3_host, *P4_host, *P5_host;
-	double *post_1overE, *P1_1overE, *P2_1overE, *P3_1overE, *P4_1overE, *P5_1overE; 
+	int i;
 	double *P1_1overE_d, *P2_1overE_d, *P3_1overE_d, *P4_1overE_d, *P5_1overE_d; 
-	double *rho_SLY_host, *p_SLY_host, *eps_SLY_host;
 	double *rhopts_host;
 	double *rr_host, *mm_host;
 	double *rr_dev, *mm_dev;
-	double max_P_host, oneOverE, p_ns_host;
-	char buff[256];
-	FILE *file;
+	double p_ns_host;
 
 	rhopts_host = (double*)malloc((nparam+1)*sizeof(double));
-	p_SLY_host = (double*)malloc((lines+1)*sizeof(double));
-	rho_SLY_host = (double*)malloc((lines+1)*sizeof(double));
-	eps_SLY_host = (double*)malloc((lines+1)*sizeof(double));
 
-	post_host = (double*)malloc((nMC+1)*sizeof(double));
+	/*post_host = (double*)malloc((nMC+1)*sizeof(double));
 	P1_host = (double*)malloc((nMC+1)*sizeof(double));
 	P2_host = (double*)malloc((nMC+1)*sizeof(double));
 	P3_host = (double*)malloc((nMC+1)*sizeof(double));
@@ -121,19 +117,20 @@ __host__ int main()
 	P3_1overE = (double*)malloc((n1overE+1)*sizeof(double));
 	P4_1overE = (double*)malloc((n1overE+1)*sizeof(double));
 	P5_1overE = (double*)malloc((n1overE+1)*sizeof(double));
+	*/
 
-	gpuErrchk( cudaMalloc(&P1_1overE_d, (n1overE*nEpsilon+1)*sizeof(double)) );
-	gpuErrchk( cudaMalloc(&P2_1overE_d, (n1overE*nEpsilon+1)*sizeof(double)) );
-	gpuErrchk( cudaMalloc(&P3_1overE_d, (n1overE*nEpsilon+1)*sizeof(double)) );
-	gpuErrchk( cudaMalloc(&P4_1overE_d, (n1overE*nEpsilon+1)*sizeof(double)) );
-	gpuErrchk( cudaMalloc(&P5_1overE_d, (n1overE*nEpsilon+1)*sizeof(double)) );
+	gpuErrchk( cudaMalloc(&P1_1overE_d, (n1overE+1)*sizeof(double)) );
+	gpuErrchk( cudaMalloc(&P2_1overE_d, (n1overE+1)*sizeof(double)) );
+	gpuErrchk( cudaMalloc(&P3_1overE_d, (n1overE+1)*sizeof(double)) );
+	gpuErrchk( cudaMalloc(&P4_1overE_d, (n1overE+1)*sizeof(double)) );
+	gpuErrchk( cudaMalloc(&P5_1overE_d, (n1overE+1)*sizeof(double)) );
 
 	rr_host = (double*)malloc((n1overE*nEpsilon+1)*sizeof(double)); 
 	mm_host = (double*)malloc((n1overE*nEpsilon+1)*sizeof(double));
 	gpuErrchk( cudaMalloc(&rr_dev, (n1overE*nEpsilon+1)*sizeof(double)));
 	gpuErrchk( cudaMalloc(&mm_dev, (n1overE*nEpsilon+1)*sizeof(double)));
 
-	j=1;
+	/*j=1;
 	for (i=1; i<=nMC; i++)
 	{
 		if (post_host[i] > oneOverE)
@@ -146,7 +143,7 @@ __host__ int main()
 			P5_1overE[j] = P5_host[i];
 			j++;
 		}
-	}
+	}*/
 
 	gpuErrchk( cudaMemcpy(P1_1overE_d, P1_1overE, (n1overE+1)*sizeof(double), cudaMemcpyHostToDevice));
 	gpuErrchk( cudaMemcpy(P2_1overE_d, P2_1overE, (n1overE+1)*sizeof(double), cudaMemcpyHostToDevice));
@@ -155,7 +152,7 @@ __host__ int main()
 	gpuErrchk( cudaMemcpy(P5_1overE_d, P5_1overE, (n1overE+1)*sizeof(double), cudaMemcpyHostToDevice));
 	
 
-	readinSLY(p_SLY_host, eps_SLY_host, rho_SLY_host, &nSLY_host);
+	//readinSLY(p_SLY_host, eps_SLY_host, rho_SLY_host, &nSLY_host);
 	getRhoPts(rhopts_host);
 	p_ns_host = bisect_linint(rho_ns, rho_SLY_host, p_SLY_host, nSLY_host);				//pressure at rho_saturation according to sly 
 
@@ -167,15 +164,16 @@ __host__ int main()
 	gpuErrchk( cudaMemcpyToSymbol(rho_SLY, rho_SLY_host, (lines+1)*sizeof(double)));	
 	gpuErrchk( cudaMemcpyToSymbol(p_SLY, p_SLY_host, (lines+1)*sizeof(double)));	
 
-
-	FILE *f_oneOverE = fopen( "MR_output/MR_oneOverE.txt","w");
+	char filename[256];
+	sprintf(filename, "MR_output/MR_oneOverE_%d.txt", myid);
+	FILE *f_oneOverE = fopen(filename,"w");
 	fprintf(f_oneOverE, "R       M    \n");
 
 	/*char filename2[260];
 	sprintf(filename2, "MR_output/MR_oneOverSqrtE_%d.txt",myid);
 	FILE *f_oneOverSqrtE = fopen(filename2,"w");*/
 	
-	fprintf(f_oneOverE, "n 1/E: %d \n", n1overE);
+	fprintf(f_oneOverE, "n 1/E for this process: %d \n", n1overE);
 	fprintf(f_oneOverE, "num threads per block: 256  n blocks: %d \n", n1overE / 256);
 	fprintf(f_oneOverE, "expected number of MR pts: %d \n", n1overE*nEpsilon);
 	fflush(f_oneOverE);
@@ -187,41 +185,25 @@ __host__ int main()
 	gpuErrchk( cudaMemcpy(rr_host, rr_dev, (n1overE*nEpsilon+1)*sizeof(double), cudaMemcpyDeviceToHost));
 	gpuErrchk( cudaMemcpy(mm_host, mm_dev, (n1overE*nEpsilon+1)*sizeof(double), cudaMemcpyDeviceToHost));
 
-	j=1;
 	for (i=1; i<=n1overE*nEpsilon; i++)
-	//for (j=1; j<=n1overE+1; j++)
-	{
-		//fprintf(f_oneOverE, "%e %e %e %e %e \n",P1_1overE[j]*p_char, P2_1overE[j]*p_char, P3_1overE[j]*p_char, P4_1overE[j]*p_char, P5_1overE[j]*p_char); 
-		
 		fprintf(f_oneOverE, "%f  %f \n", rr_host[i], mm_host[i]); 
-		//if (i % nEpsilon == 0) j++;
-	
-	}
 
 	fclose(f_oneOverE);
 	//fclose(f_oneOverSqrtE);
+
 	
 	gpuErrchk( cudaFree(rr_dev));
 	gpuErrchk( cudaFree(mm_dev));
+	gpuErrchk( cudaFree(P1_1overE_d));
+	gpuErrchk( cudaFree(P2_1overE_d));
+	gpuErrchk( cudaFree(P3_1overE_d));
+	gpuErrchk( cudaFree(P4_1overE_d));
+	gpuErrchk( cudaFree(P5_1overE_d));
 	
 	free(rhopts_host);
-	free(p_SLY_host);
-	free(rho_SLY_host);
-	free(eps_SLY_host);
 	free(rr_host);
 	free(mm_host);
-	free(post_host);
-	free(P1_host);
-	free(P2_host);
-	free(P3_host);
-	free(P4_host);
-	free(P5_host);
-	free(post_1overE);
-	free(P1_1overE);
-	free(P2_1overE);
-	free(P3_1overE);
-	free(P4_1overE);
-	free(P5_1overE);
+
 	return 0;
 }
 
@@ -241,30 +223,21 @@ __global__ void getMR_fromPs(int nn, double *rr_super, double *mm_super, double 
 	i = blockIdx.x*blockDim.x + threadIdx.x + 1;
 	index = (i-1)*nEpsilon;
 
-	printf("nparam: %d \n", nparam);
-
-	if (i < nn)
+	if (i <= nn)
 	{
-		Ppts[1] = 5.;
-		Ppts[2] = 5.;
-		Ppts[3] = 5.;
-		Ppts[4] = 5.;
-		Ppts[5] = 5.;
-		Ppts[6] = 5.;
-		/*Ppts[1] = p_ns;
+		Ppts[1] = p_ns;
 		Ppts[2] = P1[i];
 		Ppts[3] = P2[i];
 		Ppts[4] = P3[i];
 		Ppts[5] = P4[i];
 		Ppts[6] = P5[i];
-		*/		
 
-		//tov_dev(rr_indiv, mm_indiv, Ppts);
+		tov_dev(rr_indiv, mm_indiv, Ppts);
 
 		for (j=1; j<=nEpsilon; j++) 
 		{
-			rr_super[index+j] = 5. ; //rr_indiv[j]; 
-			mm_super[index+j] = 6. ; // mm_indiv[j];
+			rr_super[index+j] = rr_indiv[j]; 
+			mm_super[index+j] = mm_indiv[j];
 		}
 
 	}
@@ -315,18 +288,20 @@ __device__ void rkdriver(double *Ppts, double *gamma0_param, double *acoef_param
 	double v_eps, vout_eps;
 	double *v, *vout;
 	double *dv;							//Order ALWAYS: M, P, v, f, cassi, I
-	double *initM, *initRho, *initEpsilon, *centralP;
-
+	//double *initM, *initRho, *initEpsilon, *centralP;
+	double initM, initRho, initEpsilon, centralP;
+	
 	v = (double*)malloc((nODEs+1)*sizeof(double));
 	vout = (double*)malloc((nODEs+1)*sizeof(double));
 	dv = (double*)malloc((nODEs+1)*sizeof(double));
 
-	initRho = (double*)malloc((nEpsilon+1)*sizeof(double));
+	/*initRho = (double*)malloc((nEpsilon+1)*sizeof(double));
 	initEpsilon = (double*)malloc((nEpsilon+1)*sizeof(double));
 	initM = (double*)malloc((nEpsilon+1)*sizeof(double));
 	centralP = (double*)malloc((nEpsilon+1)*sizeof(double));
+	*/
 
-	initCond_dev(initM, initRho, initEpsilon, centralP, Ppts, gamma0_param, acoef_param);
+	//initCond_dev(initM, initRho, initEpsilon, centralP, Ppts, gamma0_param, acoef_param);
 
 	//y_v=dvector(1,nEpsilon);					//Assign memory for nu
 	//y_f=dvector(1,nEpsilon);					//Assign memory for f
@@ -337,11 +312,25 @@ __device__ void rkdriver(double *Ppts, double *gamma0_param, double *acoef_param
 	{
 	  //for (index=1; index<=2; index++)				//Loop through each rho_c twice, to determine starting value of nu
 	  //{	
-		r=r_start;							//First step located at initial radius
-		v_eps=initEpsilon[i];           			//Load initial values for density, rho
+		initRho = eps_min*pow(1.07,i-1);
+	
+		if (initRho <= rhopts[1])
+		{
+			initEpsilon = findEps0_inSLY(initRho);
+			centralP = EOSpressure(initRho, Ppts, gamma0_param, 0);
+		} else
+		{
+			initEpsilon = param_massToEnergy(initRho, Ppts, gamma0_param, acoef_param);
+			centralP = EOSpressure(initRho, Ppts, gamma0_param, 1);
+		}
+		initM = r_start*r_start*r_start*initEpsilon;
 
-		v[1]=initM[i];             				//Load initial values for M
-		v[2]=centralP[i];
+
+		r=r_start;							//First step located at initial radius
+		v_eps=initEpsilon;           			//Load initial values for density, rho
+
+		v[1]=initM;             				//Load initial values for M
+		v[2]=centralP;
 
 
 		/*if (index==1) 
@@ -355,7 +344,7 @@ __device__ void rkdriver(double *Ppts, double *gamma0_param, double *acoef_param
 		*/
 		k=1;	
 		
-		while (k <= nstep && v[2] >= Pedge*centralP[i])		//Keep stepping until P_edge (v_p) is negligible or exceed nstep	
+		while (k <= nstep && v[2] >= Pedge*centralP)		//Keep stepping until P_edge (v_p) is negligible or exceed nstep	
 		{
 			h_Pstep= (v[2]*r*r) /						//Define stepsize from minimum of dP/dr 
 				 ( (v_eps+v[2])*(v[1] + 3.0*r*r*r*v[2])*MoverR );  	// and dM/dr, calculated the the local environment    
@@ -374,7 +363,7 @@ __device__ void rkdriver(double *Ppts, double *gamma0_param, double *acoef_param
 			//v[5]=vout[5];	    					//cassi		
 			//v[6]=vout[6];						//I_trial
 			k+=1;							//Increase the stepper
-			if (k-1==nstep && v[2] >= Pedge*centralP[i])		//Verify that we've actually reached edge w/in nsteps
+			if (k-1==nstep && v[2] >= Pedge*centralP)		//Verify that we've actually reached edge w/in nsteps
 				printf("Failed to reach edge for rho_c: %d\n",i);	//Print warning if fail to reach edge
 		}
 	
@@ -391,10 +380,10 @@ __device__ void rkdriver(double *Ppts, double *gamma0_param, double *acoef_param
 	free(v);
 	free(vout);
 	free(dv);
-	free(initRho);
+	/*free(initRho);
 	free(initEpsilon);
 	free(initM);
-	free(centralP);
+	free(centralP);*/
 }
 extern "C"
 __device__ void rk4(double y_eps, double y[], double dydr[], double r, double h, 
