@@ -16,7 +16,7 @@ extern void initConditions(double *initM, double *initRho, double *initEpsilon, 
 
 	getGammaA(Ppts, gamma0_param, acoef_param);	       //Get gamma and 'a' coefs for this set of Ppts
 	initRho[1] = 1.0*eps_min;
-	for (i=2;i<=nEpsilon;i++) initRho[i] = initRho[i-1]*1.07;	//Scale starting mass density values
+	for (i=2;i<=nEpsilon;i++) initRho[i] = initRho[i-1]*1.081; //*1.07;	//Scale starting mass density values
 	for (j=1;j<=nEpsilon;j++)					//Convert init rho to eps
 	{	
 		if (initRho[j] <= rhopts[1])
