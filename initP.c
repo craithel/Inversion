@@ -79,11 +79,11 @@ extern void initP(double *mean_P1, double *sigma_P1, double *mean_P2, double *si
 	{
 		readinEoS(EOSfile, EOSext, P_EoS, eps_EoS, rho_EoS, &numlines);
 
-		P1[j] = bisect_linint(rhopts[2], rho_EoS, P_EoS, numlines); 
-		P2[j] = bisect_linint(rhopts[3], rho_EoS, P_EoS, numlines); 	
-		P3[j] = bisect_linint(rhopts[4], rho_EoS, P_EoS, numlines); 	
-		P4[j] = bisect_linint(rhopts[5], rho_EoS, P_EoS, numlines); 	
-		P5[j] = bisect_linint(rhopts[6], rho_EoS, P_EoS, numlines); 	
+		P1[j] = bisect_linint(rhopts[2], rho_EoS, P_EoS, 1, numlines); 
+		P2[j] = bisect_linint(rhopts[3], rho_EoS, P_EoS, 1, numlines); 	
+		P3[j] = bisect_linint(rhopts[4], rho_EoS, P_EoS, 1, numlines); 	
+		P4[j] = bisect_linint(rhopts[5], rho_EoS, P_EoS, 1, numlines); 	
+		P5[j] = bisect_linint(rhopts[6], rho_EoS, P_EoS, 1, numlines); 	
 		j++;
 	}
 
