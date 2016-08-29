@@ -15,7 +15,7 @@ extern int max_iarray_index(int array[], int num_elements);
 extern int min_iarray(int array[], int num_elements);
 extern int max_iarray(int array[], int num_elements);
 extern int bisection(double x, double x_array[],int numlines);
-extern double bisect_linint(double x, double x_array[],double y_array[], int numlines);
+extern double bisect_linint(double x, double x_array[],double y_array[], int lower_lim, int upper_lim);
 
 #ifdef __cplusplus
 }
