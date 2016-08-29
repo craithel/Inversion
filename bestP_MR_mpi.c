@@ -20,19 +20,20 @@
 #include "tov_dev.h"
 #include "bestPMR.h"
 
-#define nFiles 369
-#define nMCperfile 25600
-#define nMC 9472000  //nFiles*nMCperfile
-#define nSampled 5120  //10240
-#define nrand 1
+#define cutoff "1overE" //"80pct"   	 //What fraction within L_max to include
+#define ext "_onSLY"			 //Which test we're running, i.e., what directory to output/read results to/from
+#define nSampled 1280 // 5120  //10240	 //Number of 
 
+#define nFiles 369
+#define nMCperfile 5100 // 25600
+#define nMC 1881900 // 9472000  //nFiles*nMCperfile
+#define nrand 1
 #define REQUEST 1
 #define REPLY 2
 
 int main( int argc, char *argv[])
 {
-
-	int i,j, k, numprocs, myid, nSLY_host;
+	int i,j, k, numprocs, myid, nSLY_host, max_index;
 	double *post_host, *P1_host, *P2_host, *P3_host, *P4_host, *P5_host;
 	double *post_1overE, *P1_1overE, *P2_1overE, *P3_1overE, *P4_1overE, *P5_1overE; 
 	double *post_1overE_tot, *P1_1overE_tot, *P2_1overE_tot, *P3_1overE_tot, *P4_1overE_tot, *P5_1overE_tot; 
@@ -47,12 +48,15 @@ int main( int argc, char *argv[])
 	MPI_Comm world, workers;
 	MPI_Group world_group, worker_group;
 	MPI_Status status;
-
+	
 	MPI_Init(&argc, &argv);
 	world = MPI_COMM_WORLD;
 	MPI_Comm_size(world, &numprocs);
 	MPI_Comm_rank(world, &myid);
 	server = numprocs-1;				 			//last proc is server for random numbers
+
+	printf("myid: %d \n",myid);
+	fflush(stdout);
 
 	p_SLY_host = (double*)malloc((lines+1)*sizeof(double));
 	rho_SLY_host = (double*)malloc((lines+1)*sizeof(double));
@@ -67,11 +71,13 @@ int main( int argc, char *argv[])
 
 	if (myid == 0)
 	{
-		char infile[256];
+		char infile[256], dir[256];
+		sprintf(dir, "chain_output%s",ext);	
+
 		i=1;
 		for (j=0; j <= nFiles; j++)
 		{
-			sprintf(infile,"chain_output/inversion_output_%d.txt",j);
+			sprintf(infile,"%s/inversion_output_%d.txt",dir,j);
 			file = fopen(infile, "rt");
 			fgets(buff, 256, file);
 			fgets(buff, 256, file);	
@@ -105,23 +111,29 @@ int main( int argc, char *argv[])
 	MPI_Bcast(&nSLY_host, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
 	max_P_host = max_array(post_host,nMC);
-	oneOverE = max_P_host * exp(-1.);
+	max_index = max_array_index(post_host, nMC);
+
+	if (strcmp(cutoff,"1overE")==0)
+		oneOverE = max_P_host * exp(-1.);
+	else
+		oneOverE = max_P_host*0.8;
+
 
 	int nMC_thisrank, start, stop;
 	nMC_thisrank = nMC/numprocs;
-	//start = nMC_thisrank*myid + 1;
-	//stop = start + nMC_thisrank;
 
 	int n1overE_tot = 0;
 	int n1overE, nPerProc;
-	//for (i=start; i<stop; i++)
 	for (i=1; i<=nMC; i++)
-		if (post_host[i] > oneOverE) n1overE_tot++;
+		if (post_host[i] >= oneOverE) n1overE_tot++;
 
-	//n1overE = n1overE_tot/numprocs;
-	//start = n1overE*myid + 1;
-	//stop = start + n1overE;
 	nPerProc = nSampled/(numprocs-1);
+
+	if (nSampled > n1overE_tot)
+	{
+		printf("nSampled %d > n1overE %d \n *** PROGRAM TERMINATING *** \n", nSampled, n1overE_tot);
+		exit(0);
+	}
 
 	post_1overE_tot = (double*)malloc((n1overE_tot+1)*sizeof(double));
 	P1_1overE_tot = (double*)malloc((n1overE_tot+1)*sizeof(double));
@@ -165,7 +177,7 @@ int main( int argc, char *argv[])
 		j=1;
 		for (i=1; i<=nMC; i++)			//Find all P's with likelihood >= 1/E max
 		{
-			if (post_host[i] > oneOverE)
+			if (post_host[i] >= oneOverE)
 			{
 				post_1overE_tot[j] = post_host[i];
 				P1_1overE_tot[j] = P1_host[i];
@@ -178,18 +190,31 @@ int main( int argc, char *argv[])
 		}
 
 		MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);
-		j=0;
+		j=1;
 		while (j<=nPerProc)
 		{
 
 			MPI_Recv(rands, nrand+1, MPI_DOUBLE, server, REPLY, world, &status); 	//Receive 2 random numbers
 			rand_int = 1 + floor( rands[1]*n1overE_tot);
 
-			P1_1overE[j] = P1_1overE_tot[rand_int];
-			P2_1overE[j] = P2_1overE_tot[rand_int];
-			P3_1overE[j] = P3_1overE_tot[rand_int];
-			P4_1overE[j] = P4_1overE_tot[rand_int];
-			P5_1overE[j] = P5_1overE_tot[rand_int];
+			if (myid==0 && j==1)
+			{
+				printf("myid: 0, j=1, posterior: %e  max: %e \n", post_host[max_index], max_P_host);
+				post_1overE[j] = post_host[max_index];
+				P1_1overE[j] = P1_host[max_index];    //Force the maximum likelihood to be included		
+				P2_1overE[j] = P2_host[max_index];
+				P3_1overE[j] = P3_host[max_index];
+				P4_1overE[j] = P4_host[max_index];
+				P5_1overE[j] = P5_host[max_index];
+			} else
+			{
+				post_1overE[j] = post_1overE_tot[rand_int];
+				P1_1overE[j] = P1_1overE_tot[rand_int];
+				P2_1overE[j] = P2_1overE_tot[rand_int];
+				P3_1overE[j] = P3_1overE_tot[rand_int];
+				P4_1overE[j] = P4_1overE_tot[rand_int];
+				P5_1overE[j] = P5_1overE_tot[rand_int];
+			}
 			j++;	
 			
 			if (j <= nPerProc)
@@ -209,18 +234,32 @@ int main( int argc, char *argv[])
 			j++;	
 		
 		}*/
-	
+
 		char filename[256];
-		sprintf(filename, "MR_output/Ps_%d.txt", myid);
+		char MRfile[256];
+
+		if (strcmp(cutoff,"80pct")==0)
+		{
+			sprintf(filename, "MR_output%s_80pct/Ps_%d.txt",ext,myid);
+			sprintf(MRfile, "MR_output%s_80pct/MR_%d.txt",ext,myid);
+		}
+		else
+		{
+			sprintf(filename, "MR_output%s/Ps_%d.txt",ext,myid);
+			sprintf(MRfile, "MR_output%s/MR_%d.txt",ext,myid);
+		}
+
+
+		//sprintf(filename, "MR_output_smerr_80pct/Ps_%d.txt", myid);
 		FILE *f_P = fopen(filename, "w");
-		fprintf(f_P, "Randomly sampled sets of (P1,...,P5) drawn from the set of P's with 5-dimensional likelihoods within 1/E of the maximum\n");
+		fprintf(f_P, "Randomly sampled sets of (P1,...,P5) drawn from the set of P's with 5-dimensional likelihoods within %s OF MAX (%d total over threshold) \n",cutoff, n1overE_tot); // 1/E of the maximum\n");
 	  	double p_ns = bisect_linint(rho_ns, rho_SLY_host, p_SLY_host, nSLY_host);				//pressure at rho_saturation according to sly 
 		
 		for (j=1; j<=nPerProc; j++)
-			fprintf(f_P, "%e %e %e %e %e %e \n", p_ns*p_char, P1_1overE[j]*p_char,P2_1overE[j]*p_char,P3_1overE[j]*p_char,P4_1overE[j]*p_char,P5_1overE[j]*p_char);
+			fprintf(f_P, "%e  %e %e %e %e %e %e \n",post_1overE[j],  p_ns*p_char, P1_1overE[j]*p_char,P2_1overE[j]*p_char,P3_1overE[j]*p_char,P4_1overE[j]*p_char,P5_1overE[j]*p_char);
 		fclose(f_P);
 
-		kernel_driver(myid, nPerProc, P1_1overE, P2_1overE, P3_1overE, P4_1overE, P5_1overE, rho_SLY_host, p_SLY_host, eps_SLY_host, nSLY_host);	
+		kernel_driver(MRfile, myid, nPerProc, P1_1overE, P2_1overE, P3_1overE, P4_1overE, P5_1overE, rho_SLY_host, p_SLY_host, eps_SLY_host, nSLY_host);	
 
 	}
 
