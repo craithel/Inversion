@@ -172,13 +172,14 @@ extern int bisection(double x, double x_array[],int numlines)
 
 }
 
-extern double bisect_linint(double x, double x_array[],double y_array[], int numlines)
+extern double bisect_linint(double x, double x_array[],double y_array[], int lower_lim, int upper_lim)
 /* Use bisection method to search for the value corresponding to "x" 
    in the array "y_array".
+   Note: typically, lower_lim=1 and upper_lim=numlines, to search through entire array
 */
 {
 	int xmid;							//Index at midpoint
-	int a=1,b=numlines, lower_index;				//Index bounds for whole interval
+	int a=lower_lim, b=upper_lim, lower_index;				//Index bounds for whole interval
 	double m,intercept,y;						//Slope and int for linear interpolation
 
 	do
