@@ -58,7 +58,7 @@ __constant__ double p_SLY[lines+1], epsilon_SLY[lines+1], rho_SLY[lines+1];
 //__constant__ double *P1, *P2, *P3, *P4, *P5;	
 
 extern "C"
-int kernel_driver(int myid, int n1overE, double *P1_1overE, double *P2_1overE, double *P3_1overE, double *P4_1overE, double *P5_1overE, double *rho_SLY_host, double *p_SLY_host, double *eps_SLY_host, int nSLY_host)
+int kernel_driver(char *MRfile, int myid, int n1overE, double *P1_1overE, double *P2_1overE, double *P3_1overE, double *P4_1overE, double *P5_1overE, double *rho_SLY_host, double *p_SLY_host, double *eps_SLY_host, int nSLY_host)
 {
 
 	int i;
@@ -164,21 +164,23 @@ int kernel_driver(int myid, int n1overE, double *P1_1overE, double *P2_1overE, d
 	gpuErrchk( cudaMemcpyToSymbol(rho_SLY, rho_SLY_host, (lines+1)*sizeof(double)));	
 	gpuErrchk( cudaMemcpyToSymbol(p_SLY, p_SLY_host, (lines+1)*sizeof(double)));	
 
-	char filename[256];
-	sprintf(filename, "MR_output/MR_oneOverE_%d.txt", myid);
-	FILE *f_oneOverE = fopen(filename,"w");
+	//char filename[256];
+	//sprintf(filename, "MR_output_smerr_80pct/MR_oneOverE_%d.txt", myid);
+	FILE *f_oneOverE = fopen(MRfile,"w");
 	fprintf(f_oneOverE, "R       M    \n");
 
-	/*char filename2[260];
-	sprintf(filename2, "MR_output/MR_oneOverSqrtE_%d.txt",myid);
-	FILE *f_oneOverSqrtE = fopen(filename2,"w");*/
-	
+	int nThrPerB;
+	if (n1overE >= 256)
+		nThrPerB = 256;
+	else
+		nThrPerB = 128;
+
 	fprintf(f_oneOverE, "n 1/E for this process: %d \n", n1overE);
-	fprintf(f_oneOverE, "num threads per block: 256  n blocks: %d \n", n1overE / 256);
+	fprintf(f_oneOverE, "num threads per block: %d, num blocks: %d \n", nThrPerB, n1overE / nThrPerB);
 	fprintf(f_oneOverE, "expected number of MR pts: %d \n", n1overE*nEpsilon);
 	fflush(f_oneOverE);
 
-	getMR_fromPs<<< (n1overE / 256), 256 >>>(n1overE, rr_dev, mm_dev, P1_1overE_d, P2_1overE_d, P3_1overE_d, P4_1overE_d, P5_1overE_d);
+	getMR_fromPs<<< (n1overE / nThrPerB), nThrPerB >>>(n1overE, rr_dev, mm_dev, P1_1overE_d, P2_1overE_d, P3_1overE_d, P4_1overE_d, P5_1overE_d);
 	gpuErrchk( cudaPeekAtLastError() );
 	gpuErrchk( cudaDeviceSynchronize() );
 
@@ -312,7 +314,7 @@ __device__ void rkdriver(double *Ppts, double *gamma0_param, double *acoef_param
 	{
 	  //for (index=1; index<=2; index++)				//Loop through each rho_c twice, to determine starting value of nu
 	  //{	
-		initRho = eps_min*pow(1.07,i-1);
+		initRho = eps_min*pow(1.081,i-1);
 	
 		if (initRho <= rhopts[1])
 		{
@@ -736,7 +738,7 @@ __device__ void initCond_dev(double *initM, double *initRho, double *initEpsilon
 
 	getGammaA(Ppts, gamma0_param, acoef_param);	       //Get gamma and 'a' coefs for this set of Ppts
 	initRho[1] = 1.0*eps_min;
-	for (i=2;i<=nEpsilon;i++) initRho[i] = initRho[i-1]*1.07;	//Scale starting mass density values
+	for (i=2;i<=nEpsilon;i++) initRho[i] = initRho[i-1]*1.081;	//Scale starting mass density values
 	for (j=1;j<=nEpsilon;j++)					//Convert init rho to eps
 	{	
 		if (initRho[j] <= rhopts[1])
