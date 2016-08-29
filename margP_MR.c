@@ -18,9 +18,10 @@
 #include "tov.h"
 #include "mtwist-1.5/mtwist.h"
 #include "mpi.h"
+#include <time.h>
 
-#define nMC 5000
-#define nMCperfile 5000
+#define nMC_exp 9472000 	//370 files * nMCperfile
+#define nMCperfile 25600
 #define nrand 2
 #define nBins 50
 
@@ -31,7 +32,7 @@ double *rhopts; 							//-------------------------------------------------------
 double *p_SLY, *epsilon_SLY, *rho_SLY;					// Re-initialize GLOBAL variables defined in header file //
 double *initM, *initRho, *initEpsilon, *centralP;			//							 //
 double r_start, Pedge, p_ns;						//							 //
-int numlinesSLY;							//-------------------------------------------------------//
+int numlinesSLY, nMC_act;						//-------------------------------------------------------//
 
 void getBins(double *P, double *bins, double *bins_centered);
 double drawFromDistro(double Pbelow, double *bins, double *bins_centered, int *hist, int myid,  int server, MPI_Comm world, MPI_Status status);
@@ -42,12 +43,14 @@ int main(int argc, char *argv[])
 {
 	int i,j,k;
 	double *P1, *P2, *P3, *P4, *P5;
+	double *P1_all, *P2_all, *P3_all, *P4_all, *P5_all;
 	double *P1_bins, *P2_bins, *P3_bins, *P4_bins, *P5_bins;
 	double *P1_bins_c, *P2_bins_c, *P3_bins_c, *P4_bins_c, *P5_bins_c;
 	int *P1_hist, *P2_hist, *P3_hist, *P4_hist, *P5_hist;
 	double *Ppts, *gamma0_param, *acoef_param;
 	double *rr, *mm;
 	double maxM;
+	time_t t1, t2;
 	char buff[256];
 	char post[256];
 	FILE *file;
@@ -75,11 +78,11 @@ int main(int argc, char *argv[])
 	rho_SLY = dvector(1, lines);
 	epsilon_SLY = dvector(1, lines);
 
-	P1 = dvector(1,nMC);
-	P2 = dvector(1,nMC);
-	P3 = dvector(1,nMC);
-	P4 = dvector(1,nMC);
-	P5 = dvector(1,nMC);
+	P1_all = dvector(1,nMC_exp);
+	P2_all = dvector(1,nMC_exp);
+	P3_all = dvector(1,nMC_exp);
+	P4_all = dvector(1,nMC_exp);
+	P5_all = dvector(1,nMC_exp);
 	
 	P1_bins = dvector(1, nBins);
 	P2_bins = dvector(1, nBins);
@@ -110,35 +113,58 @@ int main(int argc, char *argv[])
 
 		char infile[256];
 		i=1;
-		//for (j=0; j<=368; j++)
-		//{
-		sprintf(infile,"chain_output/inversion_output_%d.txt",36);
-		file = fopen(infile, "rt");
-		fgets(buff, 256, file);
-		fgets(buff, 256, file);	
-		fgets(buff, 256, file);	
-		fgets(buff, 256, file);	
-
-		for (k=1; k<=nMCperfile; k++)
+		for (j=0; j<=369; j++)
 		{
-			fscanf(file, "%s %le %le %le %le %le", &post, &P1[i], &P2[i], &P3[i], &P4[i], &P5[i]);
-			P1[i] /= p_char;
-			P2[i] /= p_char;
-			P3[i] /= p_char;
-			P4[i] /= p_char;
-			P5[i] /= p_char;
-			i++;
-		}
-		fclose(file);
-		//}
+			sprintf(infile,"chain_output_mpa1/inversion_output_%d.txt",j);
+			file = fopen(infile, "rt");
+			fgets(buff, 256, file);
+			fgets(buff, 256, file);	
+			fgets(buff, 256, file);	
+			fgets(buff, 256, file);	
 
+			for (k=1; k<=nMCperfile; k++)
+			{
+				if (fscanf(file, "%s %le %le %le %le %le", &post, &P1_all[i], &P2_all[i], &P3_all[i], &P4_all[i], &P5_all[i]) == 6)
+				{
+					P1_all[i] /= p_char;
+					P2_all[i] /= p_char;
+					P3_all[i] /= p_char;
+					P4_all[i] /= p_char;
+					P5_all[i] /= p_char;
+					i++;
+				}
+			}
+			fclose(file);
+		}
+		nMC_act = i-1; 		//Count all the nMC that actually finished
+		readinSLY(p_SLY, epsilon_SLY, rho_SLY, &numlinesSLY);
 	}
 
-	MPI_Bcast(P1, nMC, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-	MPI_Bcast(P2, nMC, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-	MPI_Bcast(P3, nMC, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-	MPI_Bcast(P4, nMC, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-	MPI_Bcast(P5, nMC, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&nMC_act, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(P1_all, nMC_exp+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(P2_all, nMC_exp+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(P3_all, nMC_exp+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(P4_all, nMC_exp+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(P5_all, nMC_exp+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(p_SLY,lines+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(epsilon_SLY,lines+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(rho_SLY,lines+1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&numlinesSLY,1, MPI_INT, 0, MPI_COMM_WORLD);
+
+	P1 = (double*)malloc((nMC_act+1)*sizeof(double));
+	P2 = (double*)malloc((nMC_act+1)*sizeof(double));
+	P3 = (double*)malloc((nMC_act+1)*sizeof(double));
+	P4 = (double*)malloc((nMC_act+1)*sizeof(double));
+	P5 = (double*)malloc((nMC_act+1)*sizeof(double));
+
+	for (j=1; j<= nMC_act; j++)			//Trim off any zeros from the initial P arrays being sized too large
+	{
+		P1[j] = P1_all[j];
+		P2[j] = P2_all[j];
+		P3[j] = P3_all[j];
+		P4[j] = P4_all[j];
+		P5[j] = P5_all[j];
+	}
 		
 	getBins(P1, P1_bins, P1_bins_c);
 	getBins(P2, P2_bins, P2_bins_c);
@@ -148,7 +174,7 @@ int main(int argc, char *argv[])
 
 	for (i=1; i<=nBins-1; i++)
 	{
-		for (j=1; j<=nMC; j++)
+		for (j=1; j<=nMC_act; j++)
 		{
 			if (P1[j] >= P1_bins[i] && P1[j] < P1_bins[i+1]) P1_hist[i] +=1;
 			if (P2[j] >= P2_bins[i] && P2[j] < P2_bins[i+1]) P2_hist[i] +=1;
@@ -158,12 +184,37 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	printf("%d: here \n",myid);
+	fflush(stdout);
+
+	if (myid == 0)
+	{
+		printf("myid = 0 \n");
+		fflush(stdout);
+
+		FILE *f_test = fopen("margMR_output_mpa1/Phist.txt","w");
+		fprintf(f_test, "P1 bins      N      P2 bins     N       P3 bins     N      P4 bins     N      P5 bins     N\n");
+		for (i=1; i<=nBins-1;i++)
+		{
+			fprintf(f_test,"%e %d %e %d %e %d %e %d %e %d  \n",P1_bins[i]*p_char, P1_hist[i],P2_bins[i]*p_char, P2_hist[i],P3_bins[i]*p_char, P3_hist[i],P4_bins[i]*p_char, P4_hist[i],P5_bins[i]*p_char, P5_hist[i]);   	//print out LEFT hand side of bin     
+			fprintf(f_test,"%e %d %e %d %e %d %e %d %e %d  \n", P1_bins[i+1]*p_char, P1_hist[i],P2_bins[i+1]*p_char, P2_hist[i],P3_bins[i+1]*p_char, P3_hist[i],P4_bins[i+1]*p_char, P4_hist[i],P5_bins[i+1]*p_char, P5_hist[i]);    //print out RIGHT hand side of bin
+		}
+		fclose(f_test);
+		exit(0);
+	}
+
+	printf("%d: past if \n",myid);
+	fflush(stdout);
+
+
+
+
 	MPI_Comm_group(world, &world_group);						
 	ranks[0] = server;							//Create a rand server by excluding one communicator
 	MPI_Group_excl(world_group, 1, ranks, &worker_group);			// from the "world" group. The rand server supplies random nums
 	MPI_Comm_create(world, worker_group, &workers);				// to all other processes. "Worker" is the communicator
 	MPI_Group_free(&worker_group);						// group with all other processes that do the brunt of the code.
-										
+
 	if (myid == server)							// Rand server
 	{
 		do
@@ -182,14 +233,13 @@ int main(int argc, char *argv[])
 	{
 		request = 1;
 		MPI_Comm_rank(workers, &workerid);				//Determine rank
-
 		edgeConditions(&r_start, &Pedge);
-		readinSLY(p_SLY, epsilon_SLY, rho_SLY, &numlinesSLY);
+
 		getRhoPts(rhopts);	
 		p_ns = bisect_linint(rho_ns, rho_SLY, p_SLY, numlinesSLY);
 
 		char filename[256];
-		sprintf(filename,"margMR_output/MR_marg_%d.txt",myid);
+		sprintf(filename,"margMR_output_mpa1/MR_marg_%d.txt",myid);
 		FILE *f = fopen(filename,"w");
 		fprintf(f, "MR values for a randomly selected set of P's from the 5 MARGINALIZED pressure distributions\n");
 		fprintf(f, "The set of 5 random P's was checked to ensure they obeyed all our priors\n");
@@ -210,13 +260,24 @@ int main(int argc, char *argv[])
 
 			maxM = max_array(mm, nEpsilon);
 			accepted = checkPriors(Ppts, gamma0_param, acoef_param, maxM );
-			
-			if (accepted==0)
-				fprintf(f, "rejected: maxM = %f ...  %e %e %e %e %e %e \n",maxM, Ppts[1]*p_char, Ppts[2]*p_char, Ppts[3]*p_char, Ppts[4]*p_char, Ppts[5]*p_char, Ppts[6]*p_char);
 		}
-
 		for (j=1; j<=nEpsilon; j++) fprintf(f, "%f %e \n", rr[j], mm[j]);
+		fflush(f);
 		fclose(f);
+
+		char filename2[256];
+		sprintf(filename2,"margMR_output_mpa1/Ps_%d.txt",myid);
+		FILE *f_P = fopen(filename2,"w");
+		fprintf(f_P,"Randomly selected set of P's from the 5 MARGINALIZED pressure distributions \n");
+		fprintf(f_P,"%e %e %e %e %e %e \n", Ppts[1]*p_char, Ppts[2]*p_char, Ppts[3]*p_char, Ppts[4]*p_char, Ppts[5]*p_char, Ppts[6]*p_char);
+		fclose(f_P);	
+
+	}
+
+
+	if (myid != server)
+	{
+		MPI_Barrier(workers);
 	}
 
 	if (myid==0)
@@ -224,6 +285,7 @@ int main(int argc, char *argv[])
 		request=0;
 		MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);
 	}
+
 
 	if (myid != server)
 		MPI_Comm_free(&workers);
@@ -240,11 +302,11 @@ int main(int argc, char *argv[])
 	free_dvector(centralP, 1, nEpsilon);
 	free_dvector(rr, 1, nEpsilon);
 	free_dvector(mm, 1, nEpsilon);
-	free_dvector(P1, 1, nMC);
-	free_dvector(P2, 1, nMC);
-	free_dvector(P3, 1, nMC);
-	free_dvector(P4, 1, nMC);
-	free_dvector(P5, 1, nMC);
+	free_dvector(P1_all, 1, nMC_exp);
+	free_dvector(P2_all, 1, nMC_exp);
+	free_dvector(P3_all, 1, nMC_exp);
+	free_dvector(P4_all, 1, nMC_exp);
+	free_dvector(P5_all, 1, nMC_exp);
 	free_dvector(Ppts, 1, nparam);
 	free_dvector(P1_bins, 1, nBins);
 	free_dvector(P2_bins, 1, nBins);
@@ -257,6 +319,12 @@ int main(int argc, char *argv[])
 	free_ivector(P4_hist, 1, nBins-1);
 	free_ivector(P5_hist, 1, nBins-1);
 
+	free(P1);
+	free(P2);
+	free(P3);
+	free(P4);
+	free(P5);
+
 	MPI_Finalize();
 
 	return 0;
@@ -266,8 +334,8 @@ void getBins(double *P, double *bins, double *bins_centered)
 {
 	int i;
 	double lbound, ubound, delta_bin, half_delta;
-	lbound = min_array(P, nMC);
-	ubound = max_array(P, nMC);
+	lbound = min_array(P, nMC_act);
+	ubound = max_array(P, nMC_act);
 
 	delta_bin = (ubound - lbound)/(1.*nBins);
 
@@ -285,10 +353,12 @@ double drawFromDistro(double Pbelow, double *bins, double *bins_centered,int *hi
 	int request, max_hist;
 	double rand_probi, rand_Pi, lower_lim;
 	double rands[nrand+1];
-	double random_P;
+	double random_P, dbl_hist;
+	time_t t1, t2, t3;
 
 	request = 1;
 	max_hist = max_iarray(hist, nBins-1);
+	lower_lim = mymax(bins[1], Pbelow);
 
 	MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);
 
@@ -297,13 +367,13 @@ double drawFromDistro(double Pbelow, double *bins, double *bins_centered,int *hi
 	{
 		MPI_Recv(rands, nrand+1, MPI_DOUBLE, server, REPLY, world, &status); 	//Receive 2 random numbers
 
-		lower_lim = max(bins[1], Pbelow);
 		rand_Pi = lower_lim + rands[1]*(bins[nBins]-lower_lim);	 //Scale 1st rand to be within range of pressures but bigger than P_(i-1)		
 		rand_probi = max_hist*rands[2];
 
 		if (rand_Pi < bins[1] || rand_Pi >= bins[nBins])
 		{
 			MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);
+			continue;
 		}
 
 		for (i=1; i<=nBins-1; i++)
@@ -314,8 +384,9 @@ double drawFromDistro(double Pbelow, double *bins, double *bins_centered,int *hi
 				continue;
 			}
 		}
-
-		if (rand_probi <= hist[a])			//Accept the pressure if rand is within the histogram prob for that P
+		dbl_hist = hist[a]*1.;
+	
+		if (rand_probi <= dbl_hist)			//Accept the pressure if rand is within the histogram prob for that P
 		{
 			notAccepted = 0;
 			random_P = bins_centered[a];		
