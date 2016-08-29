@@ -23,10 +23,11 @@
 #define rho_char 4.747039e+17						//Characteristic mass density for neutron star in g/cm^3: (1 solar mass)/(4pi/3* 1km^3)
 #define eps_char 4.747039e+17						//Characteristic energy density = mass density * c^2
 #define p_char (eps_char*clight*clight)					//Characteristic pressure for neutron star in g s^2/cm
-#define eps_min 7.6e-4							//Lowest rho_c to evaluate
+#define rho_ns 5.688e-4							//Unitless nuclear saturation density = (rho_ns / solar mass)*(4/3 pi (1km)^3)
+#define eps_min rho_ns//7.6e-4							//Lowest rho_c to evaluate
 #define r_min 1.0e-4							//Starting radius
 #define ACCURACY 1.0e-15
-#define rho_ns 5.688e-4							//Unitless nuclear saturation density = (rho_ns / solar mass)*(4/3 pi (1km)^3)
+
 
 extern double *rhopts; 
 extern double *p_SLY, *epsilon_SLY, *rho_SLY;
