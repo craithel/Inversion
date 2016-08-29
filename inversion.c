@@ -5,7 +5,7 @@
  parametrization of 5 polytopes that are spaced evenly in log(density).
 
  To compile: 
-gcc inversion.c ../nrutil.c mtwist-1.5/mtwist.c useful_funcs.c tov_polyparam.c mockMR.c -o inversion -lm
+mpicc -g inversion.c ../nrutil.c mtwist-1.5/mtwist.c useful_funcs.c tov_polyparam.c tov_helper.c mockMR.c initP.c -o inversion -lm
 
 */
 
@@ -17,6 +17,7 @@ gcc inversion.c ../nrutil.c mtwist-1.5/mtwist.c useful_funcs.c tov_polyparam.c m
 #include <time.h>
 
 #define nMC 9472000							//Total number of desired MC steps; to be split among N parallel processes
+#define nMRgrid 50
 #define nBurn 0								//Number of accepted steps to ignore
 #define sigma_q 7e-6							//Step size (steps drawn from a gaussian distro with mean 0 and sigma_q)
 #define nrand 7								//Number of random numbers to be used in each loop of each process
@@ -30,19 +31,25 @@ double *initM, *initRho, *initEpsilon, *centralP;			//							 //
 double r_start, Pedge;							//							 //
 int numlinesSLY;							//-------------------------------------------------------//
 double p_ns;						
+double *Mgrid;
+double *Rgrid;
 
-double integrateRhoC(double unMarg_L[]);
+double integrateRhoC(double unMarg_L[], int maxM_index);
 double prior_P(int j,  double Ppts_local[], double gamma0_param[], double acoef_param[], double maxM);
 double getPosterior(double Ppts_local[], double gamma0_param[],double acoef_param[], double mm[], 
 		    double m_data[], double m_sigma[], double rr[], double r_data[], double r_sigma[]);
 void gaussian(double *steps, double mean, double sigma1, double sigma2, double sigma3, double sigma4, double sigma5, double *rands);
 void revertP(double Ppts_new[], double Ppts_old[]);
 double getCausalGamma(int j, double Ppts_local[], double gamma0_param[], double acoef_param[]);
+void getMRhist(int myid, double *mm, double *rr, int **hist);
+int firstmax(double *array, int length);
+double integrateM(double unMarg_L[], int unstable1, int unstable2, double deltaM, double mgrid[], double rgrid[], double sigmaR, double sigmaM);
+double getLikelihood(double sigmaM, double sigmaR, double dataM, double dataR, double EOSm, double EOSr);
 
 int main( int argc, char *argv[])
 {
 
-	int i,j, nMC_thisrank;
+	int i,j,k,l, nMC_thisrank;
 	int laststep_rejected = 0, toContinue;
 	int accepted=0;
 	int attempted=0;
@@ -50,14 +57,15 @@ int main( int argc, char *argv[])
 	double ratio, scriptP,step;
 	double *Ppts_old, *Ppts_new;
 	double *mm, *rr, *gamma0_param, *acoef_param;
-	double *test, *steps;
+	double *steps;
 	double mean_P1, mean_P2, mean_P3, mean_P4, mean_P5;	
 	double sigma_P1, sigma_P2, sigma_P3, sigma_P4, sigma_P5;
+	double maxM, firstMax;
 	
 	int ranks[1], numprocs, myid, server, workerid;
 	int request;
 	double rands[nrand+1];
-		
+
 	MPI_Comm world, workers;
 	MPI_Group world_group, worker_group;
 	MPI_Status status;
@@ -129,18 +137,17 @@ int main( int argc, char *argv[])
 		mm = dvector(1, nEpsilon);
 		rr = dvector(1, nEpsilon);							
 
-		p_ns = bisect_linint(rho_ns, rho_sly, p_sly, numlinessly);				//pressure at rho_saturation according to sly 
+		p_ns = bisect_linint(rho_ns, rho_SLY, p_SLY,1, numlinesSLY);				//pressure at rho_saturation according to sly 
 		getRhoPts(rhopts);								//Get the fiducial densities
-		//test = dvector(1,7);	
 
 		if (myid==0)
 		{
 			initP(&mean_P1, &sigma_P1, &mean_P2, &sigma_P2, &mean_P3, &sigma_P3, &mean_P4, &sigma_P4, &mean_P5, &sigma_P5); 
-			sigma_P1 /= 30.;
-			sigma_P2 /= 30.;
-			sigma_P3 /= 30.;
-			sigma_P4 /= 30.;
-			sigma_P5 /= 30.;
+			sigma_P1 /= 15.; //30.;
+			sigma_P2 /= 15.;
+			sigma_P3 /= 15.;
+			sigma_P4 /= 15.;
+			sigma_P5 /= 15.;
 		}
 
 		MPI_Bcast(&mean_P1, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -155,32 +162,37 @@ int main( int argc, char *argv[])
 		MPI_Bcast(&sigma_P5, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
 		int test_prior = 0;
-		while (test_prior == 0)
+		while (test_prior == 0)		//Get first set of starting Ps
 		{
 			MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);		//Send request for random numbers
 			MPI_Recv(rands, nrand+1, MPI_DOUBLE, server, REPLY, world, &status); //Receive 7 random numbers
-
-			/*test[1]=1.;			//P_ns is fixed and should not be varied
-			test[2]=rands[1]*3.;
-			test[3]=rands[2]*3.;
-			test[4]=rands[3]*3.;
-			test[5]=rands[4]*3.;
-			test[6]=rands[5]*3.;
-			for (i=1; i<=nparam; i++) 
-				Ppts_new[i] = bisect_linint(rhopts[i], rho_SLY, p_SLY, numlinesSLY)*test[i];	//Starting Ppts = dithered from SLy values
-			*/
-
+		
 			Ppts_new[1] = p_ns;
 			Ppts_new[2] = mean_P1*(rands[1]*3.);
 			Ppts_new[3] = mean_P2*(rands[2]*3.);
 			Ppts_new[4] = mean_P3*(rands[3]*3.);
 			Ppts_new[5] = mean_P4*(rands[4]*3.);
 			Ppts_new[6] = mean_P5*(rands[5]*3.);
+			
+		 	/*	
+			Ppts_new[2] = bisect_linint(rhopts[2], rho_SLY, p_SLY,1, numlinesSLY); // 5.7748e33/p_char; // 				//pressure at rho_saturation according to sly 
+			Ppts_new[3] = bisect_linint(rhopts[3], rho_SLY, p_SLY,1, numlinesSLY); //6.1207e34/p_char; // 				//pressure at rho_saturation according to sly 
+			Ppts_new[4] = bisect_linint(rhopts[4], rho_SLY, p_SLY,1, numlinesSLY); //1.259e35/p_char; // 				//pressure at rho_saturation according to sly 
+			Ppts_new[5] = bisect_linint(rhopts[5], rho_SLY, p_SLY,1, numlinesSLY); //4.4822e35/p_char; //				//pressure at rho_saturation according to sly 
+			Ppts_new[6] = bisect_linint(rhopts[6], rho_SLY, p_SLY,1, numlinesSLY); //1.177e36/p_char; //				//pressure at rho_saturation according to sly
+
+			Ppts_new[2] = 4.1270e34/p_char; // 				//"best-fit" pressure (from "most likely" EoS)
+			Ppts_new[3] = 4.4565e34/p_char; // 				//"best-fit" pressure (from "most likely" EoS)
+			Ppts_new[4] = 5.3286e34/p_char; // 				//"best-fit" pressure (from "most likely" EoS) 
+			Ppts_new[5] = 1.0687e36/p_char; //				//"best-fit" pressure (from "most likely" EoS) 
+			Ppts_new[6] = 1.8250e36/p_char; //				//"best-fit" pressure (from "most likely" EoS) 
+			*/	
 
 			getGammaA(Ppts_new, gamma0_param, acoef_param);
 
 			test_prior=1;
-			if (Ppts_new[2] < p_ns || Ppts_new[3] < 2.85e-5)	// Prior on P1 and P2:  P1 >= P_sat(sly), P2 >= 7.56MeV/fm^3
+
+			if (Ppts_new[2] < 1.35195e-5 || Ppts_new[3] < 4.42759e-5)	// nn lower limit on P1 and P2:  P1 >= 3.60 MeV/fm^3, P2 >= 11.79 MeV/fm^3
 				test_prior = 0;			
 			else
 			{
@@ -192,14 +204,25 @@ int main( int argc, char *argv[])
 						continue;
 					}
 				}
+
+				edgeConditions(&r_start, &Pedge);
+				initConditions(initM, initRho, initEpsilon, centralP, Ppts_new, gamma0_param, acoef_param);
+				tov(Ppts_new, rr, mm, gamma0_param, acoef_param);			  //Get mass, radius, and update gamma and 'a' coefs for first set of Ppts
+				maxM = max_array(mm,nEpsilon);	
+
+				if (maxM < 1.97)
+					test_prior=0;
 			}
 		}
+
 
 		edgeConditions(&r_start, &Pedge);
 		initConditions(initM, initRho, initEpsilon, centralP, Ppts_new, gamma0_param, acoef_param);
 
+			
 		char filename[260];
-		sprintf(filename,"chain_output/inversion_output_%d.txt",myid);
+		sprintf(filename,"chain_output_SLY/inversion_output_%d.txt",myid);
+		//sprintf(filename,"test/inversion_usingBestPs_%d.txt",myid);
 		FILE *f = fopen(filename,"w");
 		fprintf(f,"File created by inversion.c, assuming a 5-polytrope parametrized EoS throughout the star (P0 = P_sat) \n");
 		fprintf(f,"Starting pressures from histogram of 42 EoS and dithered by: %f %f %f %f %f\n", rands[1]*3., rands[2]*3., rands[3]*3., rands[4]*3., rands[5]*3.);
@@ -207,10 +230,59 @@ int main( int argc, char *argv[])
 		fprintf(f,"Posterior      P_1         P_2          P_3         P_4          P_5 \n");
 		fflush(f);
 		
+
 		tov(Ppts_new, rr, mm, gamma0_param, acoef_param);			  //Get mass, radius, and update gamma and 'a' coefs for first set of Ppts
+
 		posterior_old = getPosterior(Ppts_new,gamma0_param,acoef_param,		  //Get posterior likelihood for original set of Ppts
  					     mm, m_data, m_sigma,rr, r_data, r_sigma);
+		/*
+		fprintf(f, "%e %e %e %e %e %e\n", posterior_old, Ppts_new[2]*p_char, Ppts_new[3]*p_char, Ppts_new[4]*p_char, Ppts_new[5]*p_char, Ppts_new[6]*p_char);
+		for (i=1; i<=nEpsilon;i++)
+			fprintf(f,"%f %f \n", rr[i], mm[i]);
+		fflush(f);
+		exit(0);
+		*/			
 
+		double M_low = 0.2;
+		double M_up = 2.5;
+		double M_delta;
+		double R_low = 8;
+		double R_up = 15;
+		double R_delta;
+		
+		M_delta = (M_up - M_low)/nMRgrid;
+		R_delta = (R_up - R_low)/nMRgrid;
+
+		int **hist;
+
+		Mgrid = (double*)malloc((nMRgrid+1)*sizeof(double));
+		Rgrid = (double*)malloc((nMRgrid+1)*sizeof(double));
+		hist = imatrix(1, nMRgrid-1, 1, nMRgrid-1);	
+
+		for (i=1; i<=nMRgrid-1; i++)
+		{
+			for (j=1; j<=nMRgrid-1; j++) hist[i][j]=0;
+		}
+
+		Mgrid[1] = M_low;
+		Rgrid[1] = R_low;
+		for (j=2; j<=nMRgrid; j++)
+		{
+			Mgrid[j] = Mgrid[j-1] + M_delta;
+			Rgrid[j] = Rgrid[j-1] + R_delta;
+		}
+
+	
+		
+		getMRhist(myid, mm, rr, hist);
+	
+		char name2[260];
+		sprintf(name2,"margMR_output_SLY/MRgrid_%d.txt",myid);
+		FILE *fgrid = fopen(name2,"w");
+		fprintf(fgrid, "File created by inversion.c \n");
+		fprintf(fgrid, "%d grid points:  M grid from 0.8-2.5, R grid from 7-15\n",nMRgrid);
+		fflush(fgrid);
+		
 		MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);		//Send request for random numbers
 
 		i=1;
@@ -257,12 +329,15 @@ int main( int argc, char *argv[])
 			if (scriptP < ratio)						   //If new P points are accepted
 			{
 				laststep_rejected = 0;
-				//if (i > nBurn)						   //Save PPts if we're past the burn-in period
-				//{
-				fprintf(f, "%e  %6.4e  %6.4e  %6.4e  %6.4e   %6.4e \n",posterior_new, Ppts_new[2]*p_char, Ppts_new[3]*p_char,Ppts_new[4]*p_char,Ppts_new[5]*p_char,Ppts_new[6]*p_char);
+				fprintf(f, "%e  %6.4e  %6.4e  %6.4e  %6.4e   %6.4e \n",posterior_new, Ppts_new[2]*p_char, Ppts_new[3]*p_char, Ppts_new[4]*p_char,Ppts_new[5]*p_char,Ppts_new[6]*p_char);
 				fflush(f);
 				accepted++;
-				//}
+
+
+				maxM = max_array(mm,nEpsilon);	
+				firstMax = mm [ firstmax(mm,nEpsilon) ];
+				getMRhist(myid, mm, rr, hist);
+
 				i++;							 
 			}
 			else
@@ -276,13 +351,8 @@ int main( int argc, char *argv[])
 			else
 				request=0;
 			
-			if (myid==0)
+			if (request)
 				MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);
-			else
-			{
-				if (request)
-					MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);
-			}
 
 		}
 
@@ -290,7 +360,15 @@ int main( int argc, char *argv[])
 		fprintf(f,"Total steps attempted after BurnIN: %d  Number accepted after BurnIn: %d \n", attempted-nBurn, accepted);
 		fclose(f);	
 
-		//free_dvector(test,1,7);
+
+		fprintf(fgrid, "R(centered)   M(centered)      Count \n");
+		for (k=1; k<=nMRgrid-1; k++)
+		{
+			for (l=1; l<=nMRgrid-1; l++)  fprintf(fgrid, "%f   %f   %ld \n",(Mgrid[k]+Mgrid[k+1])/2., (Rgrid[l]+Rgrid[l+1])/2., hist[k][l]); 
+			fflush(fgrid);
+		}
+		fclose(fgrid);
+
 		free_dvector(Ppts_old,1,nparam);
 		free_dvector(Ppts_new,1,nparam);
 		free_dvector(steps,1,nparam);
@@ -306,17 +384,105 @@ int main( int argc, char *argv[])
 		free_dvector(initEpsilon,1,nEpsilon);
 		free_dvector(centralP,1,nEpsilon);
 		free_dvector(initRho, 1, nEpsilon);
-		
-		MPI_Comm_free(&workers);	
+	
+		free_imatrix(hist,1,nMRgrid-1, 1, nMRgrid-1);		
+		free(Mgrid);
+		free(Rgrid);
 
 	}
+
+	if (myid != server )
+		MPI_Barrier(workers);
 	
+	if (myid ==0)
+	{
+		request=0;
+		MPI_Send(&request, 1, MPI_INT, server, REQUEST, world);
+	}
+
+	if (myid != server)
+		MPI_Comm_free(&workers);
+
+
 	free_dvector(m_data,1,nData+1);
 	free_dvector(r_data,1,nData+1);
 	free_dvector(m_sigma,1,nData+1);
 	free_dvector(r_sigma,1,nData+1);
 	MPI_Finalize();
 	return 0;
+}
+
+void getMRhist(int myid, double *mm, double *rr, int **hist)
+{
+
+	int i,j,k, max1_index;
+	int nTot, nExtra = 10;	//Number of MR points to linearly interpolate between each set of MR pts
+	double *m_hr, *r_hr;	//Mass and Radius arrays for our high-res (interpolated) curve
+	double slope, b, deltaR;
+
+	nTot = (nEpsilon-1)*nExtra + nEpsilon;	//Total number of MR points in new, high-res curve
+
+	m_hr = (double*)malloc((nTot+1)*sizeof(double));
+	r_hr = (double*)malloc((nTot+1)*sizeof(double));
+	
+	k=1;
+	for (i=1; i<=nEpsilon-1; i++)			//Linearly interpolate between each set of MR points
+	{
+		slope = (mm[i]-mm[i+1])/(rr[i]-rr[i+1]);
+		b = mm[i] - slope*rr[i];
+		deltaR = (rr[i+1] - rr[i])/(nExtra+1.);	//Spacing between nExtra linearly interpolated points
+
+		m_hr[k] = mm[i];
+		r_hr[k] = rr[i];				
+		k++;
+
+		for (j=1; j<=nExtra; j++)
+		{
+			r_hr[k] = r_hr[k-1] + deltaR;
+			m_hr[k] = slope*r_hr[k] + b;		
+			k++;
+		}
+	}
+	m_hr[k] = mm[nEpsilon];	//don't miss last point!
+	r_hr[k] = rr[nEpsilon]; //don't miss last point!
+	
+	max1_index = firstmax(m_hr, nTot);
+
+	/* Now count which squares of the MR grid this high-res curve passes through */
+
+	for (i=1; i<=nMRgrid-1; i++)		//Loop through M-dimension of grid
+	{
+		for (j=1; j<=nMRgrid-1; j++)	//Loop through R-dimension of grid
+		{
+
+			for (k=1; k<=max1_index; k++)	//Loop through high-res MR curve
+			{
+				if ( m_hr[k] >= Mgrid[i] && m_hr[k] < Mgrid[i+1] && r_hr[k] >= Rgrid[j] && r_hr[k] < Rgrid[j+1])
+				{	
+					hist[i][j] += 1;			
+					break; 	//once we increase a grid of our histogram, move on (i.e., don't double count)
+				}
+			}
+		}
+	}
+
+	free(m_hr);
+	free(r_hr);
+}
+
+int firstmax(double *array, int length)
+{
+	int i, index;
+	
+	for (i=1; i<=length-3; i++)
+	{
+		if (array[i] < 1. || array[i] <= array[i+1] || array[i+1] <= array[i+2] || array[i+2] <= array[i+3])
+			index=i+1;	//If the next three M pts are higher, (and we're above M=1), not yet at the max
+		else
+			break;		//max = where next three M pts are lower (and above M=1)
+
+	}
+	return index;
 }
 
 void revertP(double Ppts_new[], double Ppts_old[])
@@ -327,39 +493,104 @@ void revertP(double Ppts_new[], double Ppts_old[])
 		Ppts_new[j] = Ppts_old[j];
 }
 
+
 double getPosterior(double Ppts_local[],  double gamma0_param[], double acoef_param[], double mm[], double m_data[], double m_sigma[], double rr[], double r_data[], double r_sigma[])
 /* Get the posterior likelihood for a set of Ppts using
  	P(P1,...,P5 | data) ~ P(data | P1,...,P5) * [P_pr(P1)* ... *P_pr(P5)] 	  
  */
 {
-	int j,k;
-	double likelihood, posterior, maxM;
+	int j,k,index, maxM_index, max1_index, max1_index_grid;
+	int ngrid = 200;
+	int stable_resumes, twins;
+	double m_min;
+	double likelihood, posterior, maxM, firstMax;
 	double *unMarg_L;
-	unMarg_L = dvector(1, nEpsilon+1);
+	double *r_j, *m_j;
+	r_j = (double*)malloc((ngrid+1)*sizeof(double));
+	m_j = (double*)malloc((ngrid+1)*sizeof(double));
+	unMarg_L = (double*)malloc((ngrid+1)*sizeof(double));
+	maxM = max_array(mm,nEpsilon);				//the maximum mass achieved for this set of P1, ..., P5
+	maxM_index = max_array_index(mm, nEpsilon);
 
+	double deltaM, slope, intercept;
+	m_min = 0.1;  // mm[minData_index]; 
+
+	max1_index = firstmax(mm,nEpsilon);
+	firstMax = mm[max1_index];
+
+
+	if (maxM-firstMax > 0.1)					//If there is more than 1 local maximum in mass
+	{
+		twins = 1;					//Set flag indicating multiple stable branches (twins)
+		j=max1_index;
+		while ( mm[j+1] < mm[j] && mm[j+2] < mm[j+1] )	//While we're still on the decreasing (unstable) branch
+			j++;					// increase counter until we reach the stable branch
+		
+		stable_resumes = j;
+	
+		deltaM = (maxM - mm[stable_resumes] + mm[max1_index] - m_min)/ngrid; 
+
+		m_j[1] = m_min;
+		j=1;
+		while (m_j[j] <= mm[max1_index])			//Get high-res grid up to the first maximum
+		{
+			r_j[j] = bisect_linint(m_j[j], mm, rr, 1, max1_index);
+			m_j[j+1] = m_j[j] + deltaM;
+			j+=1;
+		}
+		max1_index_grid = j-1;
+		m_j[max1_index_grid+1] = mm[stable_resumes]; 
+		for (j=max1_index_grid+1; j<=ngrid; j++)		//Get the high-res grid for the 2nd stable branch
+		{
+			r_j[j] = bisect_linint(m_j[j], mm, rr, stable_resumes, maxM_index);
+			if (j<ngrid) m_j[j+1] = m_j[j] + deltaM;
+		}
+
+	} else
+	{
+		twins = 0;					//Otherwise, set flag indicating only 1 maximum
+
+		deltaM = (maxM - m_min)/ngrid;
+		max1_index_grid = 0;
+		m_j[1] = m_min;
+		for (j=1; j<=ngrid; j++)					//Get the 200-pt resolution grid in M,R for this EOS
+		{
+			r_j[j] = bisect_linint(m_j[j], mm, rr, 1, maxM_index);
+			if (j<ngrid) m_j[j+1] = m_j[j] + deltaM;
+		}
+	}
 
 	likelihood = 1.0;					//P(data | P1, ..., P5)
 	for (k=1; k<=nData; k++)
 	{
-		for (j=1; j<=nEpsilon; j++)
-			unMarg_L[j] = exp(-(m_data[k] - mm[j])*(m_data[k] - mm[j])/(2.*m_sigma[k]*m_sigma[k]) - (r_data[k] - rr[j])*(r_data[k] - rr[j])/(2.*r_sigma[k]*r_sigma[k]) );
-		likelihood *= integrateRhoC(unMarg_L);
+		for (j=1; j<=ngrid; j++)
+			unMarg_L[j] = getLikelihood(m_sigma[k], r_sigma[k], m_data[k], r_data[k], m_j[j], r_j[j]);
+		likelihood *= integrateM(unMarg_L, max1_index_grid, ngrid, deltaM,  m_j, r_j, r_sigma[k], m_sigma[k]);
 	}
 
-
-
-	maxM = max_array(mm,nEpsilon);				//the maximum mass achieved for this set of P1, ..., P5
 	posterior = likelihood;
-	if (Ppts_local[2] < p_ns || Ppts_local[3] < 2.85e-5)	// Prior on P1 and P2:  P1 >= P_sat(sly), P2 >= 7.56MeV/fm^3
+
+	if (Ppts_local[2] <=1.35195e-5  || Ppts_local[3] <= 4.42759e-5 || maxM < 1.97)	// Prior on P1 and P2 from nn-interaction:  P1 >= 3.60MeV/fm^3, P2 >= 11.79MeV/fm^3
 		posterior = 0.;					
 	else
 	{
 		for (j=2; j<=nparam; j++)
 			posterior *= prior_P(j,Ppts_local, gamma0_param,acoef_param, maxM);			//Multiply the posterior likelihood by the priors
 	}
-	free_dvector(unMarg_L,1, nEpsilon+1);
+
+	free(unMarg_L);
+	free(r_j);
+	free(m_j);
 
 	return posterior;
+}
+
+double getLikelihood(double sigmaM, double sigmaR, double dataM, double dataR, double EOSm, double EOSr)
+{
+	double L;
+	L = (1./(2.*M_PI*sigmaM*sigmaR))*exp(-(dataM - EOSm)*(dataM - EOSm)/(2.*sigmaM*sigmaM) - 
+			(dataR - EOSr)*(dataR - EOSr)/(2.*sigmaR*sigmaR) );
+	return L;
 }
 
 double prior_P(int j, double Ppts_local[], double gamma0_param[], double acoef_param[], double maxM)
@@ -374,22 +605,49 @@ double prior_P(int j, double Ppts_local[], double gamma0_param[], double acoef_p
 {
 	double prior=1.0;
 
-	/* Prior on P1:  P1 >= P_sat(sly), then that P1 is not allowed	*/
-	//if (j==1 && Ppts_local[j] < p_ns)			
-	//	prior=0.;
-
-	//if (j==2 &&  Ppts_local[j] > 2.85e-5)
-	//	prior=0.;
-
 	/*  Priors: P_i > P_(i-1), the gamma leading up to P_i must not be acausal, M_max >= 1.97 */
-	if (Ppts_local[j] < Ppts_local[j-1] || gamma0_param[j-1] > getCausalGamma(j, Ppts_local,gamma0_param,acoef_param) || maxM < 1.97)  		
+	if (Ppts_local[j] < Ppts_local[j-1] || gamma0_param[j-1] > getCausalGamma(j, Ppts_local,gamma0_param,acoef_param) )  		
 		prior=0.;
 	return prior;
 }
 
+	
+double integrateM(double unMarg_L[],int unstable1, int unstable2, double deltaM, double mgrid[], double rgrid[], double sigmaR, double sigmaM)
+/*
+ For the M-R curve from a given set of (P1, ..., P5), marginalize over M_rhoc:
+
+ P(M, R | P1,... P5) = C*Integral_Mmin^Mmax P(M, R(M) | P1,... P5) P_pr(M) dM
+ 
+*/ 
+{	
+	int j, index;
+	double likelihood = 0.;
+	double prior_m = 1.0;
+	double jeffreys, dRdM;
+	double sigR2 = 1./(sigmaR*sigmaR);
+	double sigM2 = 1./(sigmaM*sigmaM);
+	
+	if (unstable1 > 0)
+	{
+		for (j=2; j<=unstable1; j++)
+		{
+			dRdM = (rgrid[j-1]-rgrid[j]) / (mgrid[j-1]-mgrid[j]);		
+			jeffreys = sqrt( sigM2 + dRdM*dRdM*sigR2 );
+			likelihood += unMarg_L[j]*jeffreys*deltaM;
+		}
+	}
+	for (j=unstable1+2; j<=unstable2; j++)
+	{
+		dRdM = (rgrid[j-1]-rgrid[j]) / (mgrid[j-1]-mgrid[j]);		
+		jeffreys = sqrt( sigM2 + dRdM*dRdM*sigR2 );
+		likelihood += unMarg_L[j]*jeffreys*deltaM;
+	}
+
+	return likelihood;
+}
 
 	
-double integrateRhoC(double unMarg_L[])
+double integrateRhoC(double unMarg_L[], int maxM_index)
 /*
  For the M-R curve from a given set of (P1, ..., P5), marginalize over
  rho_c. Note, the margalization over rho_c is the same as marginalizing 
@@ -406,15 +664,25 @@ double integrateRhoC(double unMarg_L[])
 	int ngrid = 200;
 	double likelihood = 0.;
 	double prior_rho = 1.0;
-	double deltaRho = (initRho[nEpsilon]-initRho[1])/(ngrid);
-	double rho_i, m, intercept, unMarg_L_i;
+	double deltaRho = (initRho[maxM_index]-initRho[1])/(ngrid);  	//Range of integration is from rhoC_min to rhoC_(MR curve turnover)
+	double m_i, rho_i, m, intercept, unMarg_L_i;
 	rho_i = initRho[1];
-	
-	for (j=1; j<=ngrid; j++)
+
+	for (j=1; j<=ngrid+1; j++)
 	{
-		index = bisection(rho_i, initRho, nEpsilon);		//Find the nearest value of rho_c that was actually calculated
-		m = (unMarg_L[index] - unMarg_L[index+1]) /		//Calculate the slope to linearly interpolate btwn 2 calculated rho_c's 
-		    (initRho[index] - initRho[index+1]);	
+		index = bisection(rho_i, initRho, maxM_index);		//Find the nearest value of rho_c (w/in the STABLE branch) that was actually calculated
+
+		if (initRho[index] > rho_i)	//If the point we found is above rho_i
+		{
+			m = (unMarg_L[index] - unMarg_L[index-1]) / 	//Calculate the slope between it and the rho below rho_i 
+		    	    (initRho[index] - initRho[index-1]);	
+		}
+		else							//Otherwise, if it is below rho_i
+		{
+			m = (unMarg_L[index] - unMarg_L[index+1]) /	//Calculate the slope between it and the rho above rho_i 
+		    	    (initRho[index] - initRho[index+1]);
+		}
+	
 		intercept = unMarg_L[index] - m*initRho[index];		//Calculate y-intercept
 		unMarg_L_i = m*rho_i + intercept;			//Find linear interpolation of the likelihood
 	
